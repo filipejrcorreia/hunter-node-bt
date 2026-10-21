@@ -1,0 +1,42 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Ligar ao Hunter NODE-BT",
+        "description": "Selecione o controlador Hunter NODE-BT ou insira o endereço Bluetooth.",
+        "data": {
+          "address": "Endereço Bluetooth",
+          "pin": "PIN do controlador (por omissão é 0)",
+          "default_run_time": "Tempo de rega manual por omissão (minutos)"
+        }
+      },
+      "confirm": {
+        "title": "Configurar Hunter NODE-BT",
+        "description": "Configurar comunicação com {name}.",
+        "data": {
+          "pin": "PIN do controlador (por omissão é 0)",
+          "default_run_time": "Tempo de rega manual por omissão (minutos)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Falha ao ligar ao controlador por Bluetooth. Verifique se está ligado e dentro de alcance.",
+      "invalid_auth": "O PIN fornecido foi rejeitado pelo controlador.",
+      "unknown": "Ocorreu um erro inesperado."
+    },
+    "abort": {
+      "already_configured": "Este controlador Hunter NODE-BT já está configurado."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Opções do Hunter NODE-BT",
+        "description": "Ajustar os parâmetros por omissão do controlador.",
+        "data": {
+          "default_run_time": "Tempo de rega manual por omissão (minutos)"
+        }
+      }
+    }
+  }
+}

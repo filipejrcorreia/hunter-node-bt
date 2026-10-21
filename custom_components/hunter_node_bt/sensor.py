@@ -1,0 +1,186 @@
+"""Sensor platform for Hunter NODE-BT."""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+import logging
+from typing import Any
+
+from homeassistant.components.sensor import (
+    SensorDeviceClass,
+    SensorEntity,
+    SensorEntityDescription,
+    SensorStateClass,
+)
+from homeassistant.const import PERCENTAGE, UnitOfTime
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
+
+from .const import CONTROLLER_STATES, DOMAIN
+from .coordinator import HunterConfigEntry, HunterCoordinator
+
+_LOGGER = logging.getLogger(__name__)
+
+
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: HunterConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Set up Hunter NODE-BT sensors."""
+    coordinator = entry.runtime_data
+
+    entities: list[SensorEntity] = [
+        HunterBatterySensor(coordinator),
+        HunterControllerStateSensor(coordinator),
+        HunterNextWaterTimeSensor(coordinator),
+    ]
+
+    # Check if soil moisture sensor is present/enabled
+    sensor_data = coordinator.data.get("Sensor", {})
+    ctrl_data = coordinator.data.get("Controller", {})
+    if ctrl_data.get("SoilSensorEnabled") or sensor_data.get("MoistureSensor", 0) > 0:
+        entities.append(HunterSoilMoistureSensor(coordinator))
+
+    # Add remaining run time sensor for each station
+    count = coordinator.station_count or 1
+    for i in range(1, count + 1):
+        entities.append(HunterStationRemainingSensor(coordinator, i))
+
+    async_add_entities(entities)
+
+
+class HunterBaseSensor(CoordinatorEntity[HunterCoordinator], SensorEntity):
+    """Base class for Hunter sensors."""
+
+    _attr_has_entity_name = True
+
+    def __init__(self, coordinator: HunterCoordinator) -> None:
+        """Initialize sensor."""
+        super().__init__(coordinator)
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device registry info."""
+        ctrl = self.coordinator.controller
+        return DeviceInfo(
+            identifiers={(DOMAIN, self.coordinator.address)},
+            name=self.coordinator.entry.title or "Hunter NODE-BT",
+            manufacturer="Hunter Industries",
+            model=f"NODE-BT ({self.coordinator.station_count} Station)",
+            sw_version=str(ctrl.get("Version", "")) if ctrl.get("Version") else None,
+            hw_version=str(ctrl.get("BTVersion", "")) if ctrl.get("BTVersion") else None,
+            serial_number=str(ctrl.get("SerialNumber")) if ctrl.get("SerialNumber") else None,
+        )
+
+
+class HunterBatterySensor(HunterBaseSensor):
+    """Battery percentage sensor."""
+
+    _attr_device_class = SensorDeviceClass.BATTERY
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = PERCENTAGE
+
+    def __init__(self, coordinator: HunterCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}_battery"
+        self._attr_name = "Battery"
+
+    @property
+    def native_value(self) -> int | None:
+        """Return current battery percentage."""
+        sensor = self.coordinator.data.get("Sensor", {})
+        return sensor.get("Battery")
+
+
+class HunterSoilMoistureSensor(HunterBaseSensor):
+    """Soil moisture percentage sensor."""
+
+    _attr_device_class = SensorDeviceClass.MOISTURE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = PERCENTAGE
+
+    def __init__(self, coordinator: HunterCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}_moisture"
+        self._attr_name = "Soil Moisture"
+
+    @property
+    def native_value(self) -> int | None:
+        """Return current moisture percentage."""
+        state = self.coordinator.data.get("State", {})
+        val = state.get("SoilSensorPercentage")
+        if val is not None and val > 0:
+            return val
+        sensor = self.coordinator.data.get("Sensor", {})
+        return sensor.get("MoistureSensor")
+
+
+class HunterControllerStateSensor(HunterBaseSensor):
+    """Controller operational state sensor."""
+
+    _attr_icon = "mode_edit"
+
+    def __init__(self, coordinator: HunterCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}_state"
+        self._attr_name = "Controller State"
+
+    @property
+    def native_value(self) -> str:
+        """Return state description."""
+        state = self.coordinator.data.get("State", {})
+        raw_state = state.get("ControllerState", 0)
+        return CONTROLLER_STATES.get(raw_state, f"unknown_{raw_state}")
+
+
+class HunterNextWaterTimeSensor(HunterBaseSensor):
+    """Next scheduled watering timestamp sensor."""
+
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+
+    def __init__(self, coordinator: HunterCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}_next_water_time"
+        self._attr_name = "Next Water Time"
+
+    @property
+    def native_value(self) -> datetime | None:
+        """Return next watering time as UTC datetime."""
+        state = self.coordinator.data.get("State", {})
+        ts = state.get("NextWaterTime", 0)
+        if not ts or ts <= 0:
+            return None
+        try:
+            return datetime.fromtimestamp(ts, tz=timezone.utc)
+        except (ValueError, OverflowError, OSError):
+            return None
+
+
+class HunterStationRemainingSensor(HunterBaseSensor):
+    """Remaining watering time for a specific station."""
+
+    _attr_device_class = SensorDeviceClass.DURATION
+    _attr_native_unit_of_measurement = UnitOfTime.SECONDS
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, coordinator: HunterCoordinator, station_number: int) -> None:
+        super().__init__(coordinator)
+        self.station_number = station_number
+        self._attr_unique_id = f"{coordinator.address}_station_{station_number}_remaining"
+
+        station_cfg = coordinator.stations.get(station_number, {})
+        configured_name = station_cfg.get("Name")
+        if configured_name and configured_name.strip():
+            self._attr_name = f"{configured_name.strip()} Remaining Time"
+        else:
+            self._attr_name = f"Station {station_number} Remaining Time"
+
+    @property
+    def native_value(self) -> int:
+        """Return remaining run time in seconds."""
+        state = self.coordinator.data.get("State", {})
+        st_data = state.get(f"Station_{self.station_number}", {})
+        return st_data.get("Remaining", 0)

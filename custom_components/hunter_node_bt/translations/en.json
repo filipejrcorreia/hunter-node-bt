@@ -1,0 +1,42 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Hunter NODE-BT",
+        "description": "Select your Hunter NODE-BT controller or enter its Bluetooth address.",
+        "data": {
+          "address": "Bluetooth Address",
+          "pin": "Controller PIN (default is 0)",
+          "default_run_time": "Default Manual Run Time (minutes)"
+        }
+      },
+      "confirm": {
+        "title": "Configure Hunter NODE-BT",
+        "description": "Set up communication with {name}.",
+        "data": {
+          "pin": "Controller PIN (default is 0)",
+          "default_run_time": "Default Manual Run Time (minutes)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to the controller over Bluetooth. Ensure it is powered and within range.",
+      "invalid_auth": "The PIN provided was rejected by the controller.",
+      "unknown": "An unexpected error occurred."
+    },
+    "abort": {
+      "already_configured": "This Hunter NODE-BT controller is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Hunter NODE-BT Options",
+        "description": "Adjust default controller parameters.",
+        "data": {
+          "default_run_time": "Default Manual Run Time (minutes)"
+        }
+      }
+    }
+  }
+}

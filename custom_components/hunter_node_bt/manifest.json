@@ -1,0 +1,16 @@
+{
+  "domain": "hunter_node_bt",
+  "name": "Hunter NODE-BT",
+  "version": "1.0.0",
+  "codeowners": [],
+  "config_flow": true,
+  "dependencies": ["bluetooth_adapters"],
+  "documentation": "https://github.com/custom-components/hunter_node_bt",
+  "iot_class": "local_polling",
+  "bluetooth": [
+    {
+      "service_uuid": "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
+    }
+  ],
+  "requirements": ["bleak-retry-connector>=3.5.0"]
+}
