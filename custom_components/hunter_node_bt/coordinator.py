@@ -15,9 +15,10 @@ from .api import HunterAuthError, HunterConnectionError, HunterNodeBTClient
 from .const import (
     CONF_DEFAULT_RUN_TIME,
     CONF_PIN,
+    CONF_SCAN_INTERVAL,
     DEFAULT_PIN,
     DEFAULT_RUN_TIME_MIN,
-    DEFAULT_SCAN_INTERVAL,
+    DEFAULT_SCAN_INTERVAL_MIN,
     DOMAIN,
 )
 
@@ -30,11 +31,12 @@ class HunterCoordinator(DataUpdateCoordinator[dict]):
     """Polls controller state over BLE and caches the static station layout."""
 
     def __init__(self, hass: HomeAssistant, entry: HunterConfigEntry) -> None:
+        scan_interval_min = entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL_MIN)
         super().__init__(
             hass,
             _LOGGER,
             name=f"{DOMAIN} {entry.title}",
-            update_interval=timedelta(seconds=DEFAULT_SCAN_INTERVAL),
+            update_interval=timedelta(minutes=int(scan_interval_min)),
         )
         self.entry = entry
         self.address: str = entry.unique_id or entry.data["address"]
@@ -88,18 +90,32 @@ class HunterCoordinator(DataUpdateCoordinator[dict]):
             raise ConfigEntryAuthFailed(str(err)) from err
         except HunterConnectionError as err:
             raise UpdateFailed(str(err)) from err
+        finally:
+            await client.disconnect()
 
     async def async_start_station(self, station: int, run_time_s: int | None = None) -> None:
         seconds = run_time_s if run_time_s is not None else self.default_run_time_s
-        await self._get_client().start_station(station, seconds)
+        client = self._get_client()
+        try:
+            await client.start_station(station, seconds)
+        finally:
+            await client.disconnect()
         await self.async_request_refresh()
 
     async def async_run_program(self, letter: str, run_time_s: int | None = None) -> None:
-        await self._get_client().run_program(letter, run_time_s)
+        client = self._get_client()
+        try:
+            await client.run_program(letter, run_time_s)
+        finally:
+            await client.disconnect()
         await self.async_request_refresh()
 
     async def async_stop_all(self) -> None:
-        await self._get_client().stop_all()
+        client = self._get_client()
+        try:
+            await client.stop_all()
+        finally:
+            await client.disconnect()
         await self.async_request_refresh()
 
     async def async_shutdown_client(self) -> None:

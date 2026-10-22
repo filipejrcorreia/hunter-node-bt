@@ -36,7 +36,7 @@ Reverse-engineered directly from the official Hunter NODE-BT app (`com.hunter.no
 
 1. Open **HACS** in your Home Assistant instance.
 2. Click the three dots in the top right corner and select **Custom repositories**.
-3. Add the repository URL: `https://github.com/<your-username>/hunter-node-bt` with category **Integration**.
+3. Add the repository URL: `https://github.com/filipejrcorreia/hunter-node-bt` with category **Integration**.
 4. Click **Download**, then restart Home Assistant.
 
 ### Manual Installation
@@ -52,6 +52,40 @@ Reverse-engineered directly from the official Hunter NODE-BT app (`com.hunter.no
 2. Search for **Hunter NODE-BT** (or accept the discovered Bluetooth device notification).
 3. If prompted, select your controller's Bluetooth address and enter your **PIN** (default is `0`).
 4. Set your preferred default manual run time (default is 10 minutes).
+
+---
+
+## Standalone Test Client
+
+A standalone command-line testing tool is included in [`hunter_node_bt_client.py`](hunter_node_bt_client.py):
+
+```bash
+# Set up virtual environment and install dependencies
+python3 -m venv .venv
+source .venv/bin/activate
+pip install bleak
+
+# Read full controller status (auto-discovers nearby device)
+python hunter_node_bt_client.py read-all
+
+# Read current running/sensor state
+python hunter_node_bt_client.py read-state
+
+# Start station 1 for 60 seconds
+python hunter_node_bt_client.py start 1 60
+
+# Stop all stations
+python hunter_node_bt_client.py stop
+
+# Run program A
+python hunter_node_bt_client.py run-program A
+
+# Send an arbitrary raw JSON command
+python hunter_node_bt_client.py raw '{"Read":"Section_Sensor"}'
+
+# Target a specific address or custom PIN
+python hunter_node_bt_client.py -a <ADDRESS> -p <PIN> <command>
+```
 
 ---
 

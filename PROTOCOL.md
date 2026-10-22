@@ -27,11 +27,11 @@ filter on the service UUID above.
 
 ## 2. GATT map
 
-| Purpose | Service UUID | Characteristic UUID | Dir |
+| Purpose | Service UUID | Characteristic UUID | Dir / Properties |
 |---|---|---|---|
-| **Message — request** (app→device) | `6e400001-b5a3-f393-e0a9-e50e24dcca9e` (NUS) | `6e400002-b5a3-f393-e0a9-e50e24dcca9e` | Write (no resp) |
-| **Message — response** (device→app) | same | `6e400003-b5a3-f393-e0a9-e50e24dcca9e` | Notify |
-| **PIN auth** | `0ed3e3d3-8cd8-4f29-8fec-a7d3a2c5443e` | `4c9dbe52-3566-4dfc-a299-4ea1353970e2` | Write + Notify |
+| **Message — request** (app→device) | `6e400001-b5a3-f393-e0a9-e50e24dcca9e` (NUS) | `6e400002-b5a3-f393-e0a9-e50e24dcca9e` | Write (with response) |
+| **Message — response** (device→app) | same | `6e400003-b5a3-f393-e0a9-e50e24dcca9e` | Indicate / Notify |
+| **PIN auth** | `0ed3e3d3-8cd8-4f29-8fec-a7d3a2c5443e` | `4c9dbe52-3566-4dfc-a299-4ea1353970e2` | Write without response + Notify |
 | Controller FW update | `0031f62c-b837-11e7-abc4-cec278b6b50a` | req `6d9e1460-…`, resp `41a87e7b-…` | — |
 | Bootloader FW update | `3595f2c9-f57c-429c-ae01-185ef51d4020` | req `639b5b38-…`, resp `04498679-…` | — |
 | BT OTA (TI) | `1d14d6ee-fd63-4fa1-bfa4-8f47b42119f0` | ctrl `f7bf3564-…`, data `984227f3-…` | — |
@@ -98,7 +98,7 @@ Change PIN is the same pattern with packetTypes 5→6→7→8.
 1. Serialize the command object to **JSON** (Newtonsoft; compact).
 2. UTF-8 encode.
 3. Split into **20-byte chunks** (`ChunkBytesIntoPackets`, chunk size 20).
-4. Write each chunk to `6e400002` (write-without-response).
+4. Write each chunk to `6e400002` (write with response). Note that GATT property on 6e400002 is write-with-response; writes without response are ignored by the controller.
 
 **Receive** (`MessageServiceOnNotify`):
 - Each notification on `6e400003` is a UTF-8 fragment; append to a buffer.

@@ -263,4 +263,18 @@ o fim é sempre `\0`. Um comando de cada vez (semáforo). O JSON é compacto e u
 - Receção/parse: `src2/NodeV2.Services.cs:3112` (`MessageServiceOnNotify`)
 - Login PIN: `src2/NodeV2.Services.cs:3270` (`LoginUsingPinAsync`), `:3329` (`PinServiceOnNotify`),
   `:3346` (`SendLoginRequestAsync`), `:3359` (`SendLoginChallengeResponseAsync`)
-- Cifra/struct/enum: `src2/NodeV2.Services.cs:3428`–`3500`
+---
+
+## 10. Validação em Hardware Real (2026-10-22)
+
+O cliente standalone foi testado e validado com sucesso contra um controlador real **NODE-BT-543044** (2 estações: Oliveira e Limoeiro):
+
+- **Propriedades GATT reais descobertas:**
+  - `PIN_CHAR` (`4c9dbe52`): suporta apenas `write-without-response`, `read`, `notify`. Escrita com `response=True` falhava com `GATT Protocol Error: Write Not Permitted`. Corrigido para `response=False`.
+  - `MSG_RX` (`6e400002`): suporta apenas `write` (with response). Escrita com `response=False` era ignorada pelo controlador. Corrigido para `response=True`.
+  - `MSG_TX` (`6e400003`): suporta `indicate`, `read`.
+- **Resultado:**
+  - Descoberta automática BLE OK.
+  - Handshake e autenticação PIN (XOR challenge-response) OK.
+  - Leitura `ReadAll` OK com JSON completo de estações, bateria (80%), programas e sensores retornado.
+  - Código do `hunter_node_bt_client.py` e do componente HA (`custom_components/hunter_node_bt/api.py`) atualizado.

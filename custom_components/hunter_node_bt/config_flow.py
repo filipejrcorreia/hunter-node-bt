@@ -17,8 +17,10 @@ from .api import HunterAuthError, HunterConnectionError, HunterNodeBTClient
 from .const import (
     CONF_DEFAULT_RUN_TIME,
     CONF_PIN,
+    CONF_SCAN_INTERVAL,
     DEFAULT_PIN,
     DEFAULT_RUN_TIME_MIN,
+    DEFAULT_SCAN_INTERVAL_MIN,
     DOMAIN,
     NUS_SERVICE,
 )
@@ -212,11 +214,17 @@ class HunterOptionsFlowHandler(OptionsFlow):
         default_run_time = self.config_entry.options.get(
             CONF_DEFAULT_RUN_TIME, DEFAULT_RUN_TIME_MIN
         )
+        scan_interval = self.config_entry.options.get(
+            CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL_MIN
+        )
 
         schema = vol.Schema(
             {
                 vol.Required(CONF_DEFAULT_RUN_TIME, default=default_run_time): vol.All(
                     vol.Coerce(int), vol.Range(min=1, max=240)
+                ),
+                vol.Required(CONF_SCAN_INTERVAL, default=scan_interval): vol.All(
+                    vol.Coerce(int), vol.Range(min=1, max=120)
                 ),
             }
         )

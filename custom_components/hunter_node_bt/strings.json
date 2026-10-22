@@ -34,7 +34,8 @@
         "title": "Hunter NODE-BT Options",
         "description": "Adjust default controller parameters.",
         "data": {
-          "default_run_time": "Default Manual Run Time (minutes)"
+          "default_run_time": "Default Manual Run Time (minutes)",
+          "scan_interval": "Update Polling Interval (minutes, battery-saving)"
         }
       }
     }

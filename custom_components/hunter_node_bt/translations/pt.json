@@ -34,7 +34,8 @@
         "title": "Opções do Hunter NODE-BT",
         "description": "Ajustar os parâmetros por omissão do controlador.",
         "data": {
-          "default_run_time": "Tempo de rega manual por omissão (minutos)"
+          "default_run_time": "Tempo de rega manual por omissão (minutos)",
+          "scan_interval": "Intervalo de atualização (minutos, poupança de bateria)"
         }
       }
     }

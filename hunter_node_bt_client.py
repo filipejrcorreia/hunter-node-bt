@@ -99,15 +99,15 @@ class HunterNodeBT:
         await self._login()
 
     async def _login(self):
-        # 1) send LoginRequest
-        await self.client.write_gatt_char(PIN_CHAR, _xor_ac(_pin_info(LOGIN_REQUEST)), response=True)
+        # 1) send LoginRequest (PIN characteristic requires write-without-response)
+        await self.client.write_gatt_char(PIN_CHAR, _xor_ac(_pin_info(LOGIN_REQUEST)), response=False)
         # 2) receive challenge (random number)
         ptype, result, rnd, _ = await self._next_pin()
         if ptype != LOGIN_CHALLENGE_REQUEST or result != 0:
             raise RuntimeError(f"login challenge failed: type={ptype} result={result}")
         # 3) respond with pin XOR random
         resp = _pin_info(LOGIN_CHALLENGE_RESPONSE, random_number=rnd, pin=self.pin ^ rnd)
-        await self.client.write_gatt_char(PIN_CHAR, _xor_ac(resp), response=True)
+        await self.client.write_gatt_char(PIN_CHAR, _xor_ac(resp), response=False)
         # 4) result
         ptype, result, _, _ = await self._next_pin()
         if ptype != LOGIN_CHALLENGE_RESULT or result != 0:
@@ -126,30 +126,74 @@ class HunterNodeBT:
             self._msg_future = loop.create_future()
             self._msg_buf.clear()
         for i in range(0, len(payload), CHUNK):
-            await self.client.write_gatt_char(MSG_RX, payload[i : i + CHUNK], response=False)
+            # Nordic UART RX characteristic requires write with response
+            await self.client.write_gatt_char(MSG_RX, payload[i : i + CHUNK], response=True)
         if expect_reply:
             raw = await asyncio.wait_for(self._msg_future, 20)
             return sanitize_hunter_json(raw)
         return None
 
     async def read_all(self) -> dict:
-        return json.loads(await self.send_command({"Read": "All"}))
+        reply = await self.send_command({"Read": "All"})
+        return json.loads(reply) if reply else {}
 
     async def read_state(self) -> dict:
-        return json.loads(await self.send_command({"Read": "Section_State"}))
+        reply = await self.send_command({"Read": "Section_State"})
+        return json.loads(reply) if reply else {}
 
-    async def start_station(self, station: int, seconds: int):
-        await self.send_command({"Manual": {"StationNumber": station, "RunTime": seconds}})
+    async def start_station(self, station: int, seconds: int) -> str | None:
+        return await self.send_command({"Manual": {"StationNumber": station, "RunTime": seconds}})
 
-    async def stop_all(self):
-        await self.send_command({"Manual": {"StopAll": True}})
+    async def stop_all(self) -> str | None:
+        return await self.send_command({"Manual": {"StopAll": True}})
+
+    async def run_program(self, program: str) -> str | None:
+        return await self.send_command({"Manual": {"ProgramLetter": program.upper()}})
 
 
 # --- Quick CLI runner -------------------------------------------------------
 async def main():
+    import argparse
     import sys
-    address = sys.argv[1] if len(sys.argv) > 1 else None
-    pin = int(sys.argv[2]) if len(sys.argv) > 2 else 0
+
+    if BleakClient is None or BleakScanner is None:
+        print("Error: 'bleak' library is not installed.")
+        print("Please install bleak with: pip install bleak")
+        sys.exit(1)
+
+    parser = argparse.ArgumentParser(description="Hunter NODE-BT BLE CLI Client")
+    parser.add_argument("--address", "-a", default=None, help="Bluetooth address/UUID (auto-discovered if omitted)")
+    parser.add_argument("--pin", "-p", type=int, default=0, help="Security PIN (default: 0)")
+
+    subparsers = parser.add_subparsers(dest="cmd", help="Action to perform")
+    subparsers.add_parser("read-all", help="Read complete controller configuration and state (default)")
+    subparsers.add_parser("read-state", help="Read current watering state and station progress")
+
+    start_p = subparsers.add_parser("start", help="Start manual watering on a station")
+    start_p.add_argument("station", type=int, help="Station number (1-4)")
+    start_p.add_argument("seconds", type=int, help="Run duration in seconds")
+
+    subparsers.add_parser("stop", help="Stop all active watering")
+
+    prog_p = subparsers.add_parser("run-program", help="Run program cycle (A, B, C, or T)")
+    prog_p.add_argument("letter", choices=["A", "B", "C", "T", "a", "b", "c", "t"], help="Program letter")
+
+    raw_p = subparsers.add_parser("raw", help="Send arbitrary raw JSON command to the controller")
+    raw_p.add_argument("json_str", help="JSON string, e.g. '{\"Manual\":{\"StopAll\":true}}'")
+
+    args, unknown = parser.parse_known_args()
+
+    address = args.address
+    pin = args.pin
+    action = args.cmd or "read-all"
+
+    # Backward compatibility: handle positional address and pin (e.g. client.py <MAC> [PIN])
+    if not address and unknown:
+        candidate = unknown[0]
+        if ":" in candidate or "-" in candidate:
+            address = candidate
+            if len(unknown) > 1 and unknown[1].isdigit():
+                pin = int(unknown[1])
 
     if not address:
         print(f"Scanning for NODE-BT controllers (filtering on NUS {NUS_SERVICE} or name)...")
@@ -173,7 +217,7 @@ async def main():
                 for name, addr in other_devices[:10]:
                     print(f"   - {name} ({addr})")
             print("\nTip: Make sure the controller is powered on, nearby, and disconnected from the phone app.")
-            print("You can also run directly with the MAC address: py -3.12 hunter_node_bt_client.py <MAC_ADDRESS> [PIN]")
+            print("You can also run directly with the MAC/UUID: python hunter_node_bt_client.py -a <ADDRESS> [-p PIN]")
             return
 
         address = hunter_matches[0].address
@@ -183,11 +227,35 @@ async def main():
     try:
         print(f"Connecting to {address}...")
         await client.connect()
-        print("Authenticated successfully with PIN {pin}!".format(pin=pin))
+        print(f"Authenticated successfully with PIN {pin}!\n")
 
-        print("\nReading full state (ReadAll)...")
-        model = await client.read_all()
-        print(json.dumps(model, indent=2))
+        if action == "read-all":
+            print("Reading full state (ReadAll)...")
+            res = await client.read_all()
+            print(json.dumps(res, indent=2))
+        elif action == "read-state":
+            print("Reading running state (Section_State)...")
+            res = await client.read_state()
+            print(json.dumps(res, indent=2))
+        elif action == "start":
+            print(f"Starting station {args.station} for {args.seconds} seconds...")
+            reply = await client.start_station(args.station, args.seconds)
+            print(f"Controller reply: {reply}")
+        elif action == "stop":
+            print("Stopping all active watering...")
+            reply = await client.stop_all()
+            print(f"Controller reply: {reply}")
+        elif action == "run-program":
+            letter = args.letter.upper()
+            print(f"Starting program {letter}...")
+            reply = await client.run_program(letter)
+            print(f"Controller reply: {reply}")
+        elif action == "raw":
+            cmd = json.loads(args.json_str)
+            print(f"Sending raw command: {cmd}")
+            reply = await client.send_command(cmd)
+            print(f"Controller reply: {reply}")
+
     except Exception as err:
         print(f"\nError communicating with controller: {err}")
     finally:

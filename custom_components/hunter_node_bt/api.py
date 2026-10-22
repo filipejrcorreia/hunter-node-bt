@@ -121,12 +121,12 @@ class HunterNodeBTClient:
     async def _login(self) -> None:
         while not self._pin_q.empty():
             self._pin_q.get_nowait()
-        await self._client.write_gatt_char(PIN_CHAR, _xor_ac(_pin_info(_LOGIN_REQUEST)), response=True)
+        await self._client.write_gatt_char(PIN_CHAR, _xor_ac(_pin_info(_LOGIN_REQUEST)), response=False)
         ptype, result, rnd, _ = await asyncio.wait_for(self._pin_q.get(), COMMAND_TIMEOUT)
         if ptype != _LOGIN_CHALLENGE_REQUEST or result != 0:
             raise HunterConnectionError(f"Login challenge failed (type={ptype} result={result})")
         resp = _pin_info(_LOGIN_CHALLENGE_RESPONSE, random_number=rnd, pin=self._pin ^ rnd)
-        await self._client.write_gatt_char(PIN_CHAR, _xor_ac(resp), response=True)
+        await self._client.write_gatt_char(PIN_CHAR, _xor_ac(resp), response=False)
         ptype, result, _, _ = await asyncio.wait_for(self._pin_q.get(), COMMAND_TIMEOUT)
         if ptype != _LOGIN_CHALLENGE_RESULT or result != 0:
             raise HunterAuthError(f"PIN rejected (result={result})")
@@ -149,7 +149,7 @@ class HunterNodeBTClient:
                 self._msg_future = loop.create_future()
                 self._msg_buf.clear()
             for i in range(0, len(payload), CHUNK):
-                await self._client.write_gatt_char(MSG_RX, payload[i : i + CHUNK], response=False)
+                await self._client.write_gatt_char(MSG_RX, payload[i : i + CHUNK], response=True)
             if expect_reply:
                 raw_reply = await asyncio.wait_for(self._msg_future, COMMAND_TIMEOUT)
                 return sanitize_hunter_json(raw_reply)

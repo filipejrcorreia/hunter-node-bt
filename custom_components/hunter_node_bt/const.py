@@ -7,10 +7,12 @@ DOMAIN = "hunter_node_bt"
 # Config / options keys
 CONF_PIN = "pin"
 CONF_DEFAULT_RUN_TIME = "default_run_time"  # minutes
+CONF_SCAN_INTERVAL = "scan_interval"  # minutes
 
 DEFAULT_PIN = 0
 DEFAULT_RUN_TIME_MIN = 10
-DEFAULT_SCAN_INTERVAL = 60  # seconds
+DEFAULT_SCAN_INTERVAL_MIN = 10
+DEFAULT_SCAN_INTERVAL = 600  # seconds (10 minutes for battery preservation)
 
 # GATT UUIDs (Nordic UART Service used as a UART bridge)
 NUS_SERVICE = "6e400001-b5a3-f393-e0a9-e50e24dcca9e"

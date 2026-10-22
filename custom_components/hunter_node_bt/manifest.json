@@ -2,10 +2,11 @@
   "domain": "hunter_node_bt",
   "name": "Hunter NODE-BT",
   "version": "1.0.0",
-  "codeowners": [],
+  "codeowners": ["@filipejrcorreia"],
   "config_flow": true,
   "dependencies": ["bluetooth_adapters"],
-  "documentation": "https://github.com/custom-components/hunter_node_bt",
+  "documentation": "https://github.com/filipejrcorreia/hunter-node-bt",
+  "integration_type": "device",
   "iot_class": "local_polling",
   "bluetooth": [
     {
