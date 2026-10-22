@@ -6,7 +6,7 @@ Custom Home Assistant integration (HACS) for **Hunter NODE-BT** Bluetooth batter
 
 Reverse-engineered directly from the official Hunter NODE-BT app (`com.hunter.nodev2`).
 
-[☕ Buy me a coffee](https://buymeacoffee.com/ffilip37k)
+[![Buy me a coffee](custom_components/hunter_node_bt/brand/buymeacoffee.png)](https://buymeacoffee.com/ffilip37k)
 
 ---
 
