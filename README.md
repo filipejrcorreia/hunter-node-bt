@@ -1,8 +1,12 @@
 # Hunter NODE-BT Home Assistant Integration
 
+![Hunter NODE-BT integration icon](custom_components/hunter_node_bt/brand/icon.png)
+
 Custom Home Assistant integration (HACS) for **Hunter NODE-BT** Bluetooth battery-operated irrigation controllers (1, 2, and 4 stations).
 
 Reverse-engineered directly from the official Hunter NODE-BT app (`com.hunter.nodev2`).
+
+[☕ Buy me a coffee](https://buymeacoffee.com/ffilip37k)
 
 ---
 
