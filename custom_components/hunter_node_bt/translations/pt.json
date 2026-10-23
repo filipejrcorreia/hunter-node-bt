@@ -6,7 +6,7 @@
         "description": "Selecione o controlador Hunter NODE-BT ou insira o endereço Bluetooth.",
         "data": {
           "address": "Endereço Bluetooth",
-          "pin": "PIN do controlador (por omissão é 0)",
+          "pin": "PIN do controlador (0-65535; por omissão é 0)",
           "default_run_time": "Tempo de rega manual por omissão (minutos)"
         }
       },
@@ -14,7 +14,7 @@
         "title": "Configurar Hunter NODE-BT",
         "description": "Configurar comunicação com {name}.",
         "data": {
-          "pin": "PIN do controlador (por omissão é 0)",
+          "pin": "PIN do controlador (0-65535; por omissão é 0)",
           "default_run_time": "Tempo de rega manual por omissão (minutos)"
         }
       }

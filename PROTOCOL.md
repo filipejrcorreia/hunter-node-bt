@@ -109,6 +109,12 @@ Change PIN is the same pattern with packetTypes 5→6→7→8.
   0 = success); otherwise it's a **read result** (a `CommandModel`, see §6).
 - Commands are issued one at a time (single-command semaphore).
 
+The integration and standalone client share the same protocol helpers. They
+accept numeric PINs from `0` to `65535`, reject empty or invalid JSON replies,
+and cap an assembled response at 64 KiB. A timeout, empty/invalid JSON reply, or
+oversized reply disconnects the BLE client so a late notification cannot be
+mistaken for the next command's response.
+
 ---
 
 ## 5. Command catalog

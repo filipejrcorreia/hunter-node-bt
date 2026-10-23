@@ -27,6 +27,11 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+PIN_SCHEMA = vol.All(
+    vol.Coerce(int),
+    vol.Range(min=0, max=65535),
+)
+
 
 class HunterConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Hunter NODE-BT."""
@@ -95,7 +100,7 @@ class HunterConfigFlow(ConfigFlow, domain=DOMAIN):
 
         schema = vol.Schema(
             {
-                vol.Required(CONF_PIN, default=DEFAULT_PIN): vol.Coerce(int),
+                vol.Required(CONF_PIN, default=DEFAULT_PIN): PIN_SCHEMA,
                 vol.Required(CONF_DEFAULT_RUN_TIME, default=DEFAULT_RUN_TIME_MIN): vol.All(
                     vol.Coerce(int), vol.Range(min=1, max=240)
                 ),
@@ -167,7 +172,7 @@ class HunterConfigFlow(ConfigFlow, domain=DOMAIN):
             schema = vol.Schema(
                 {
                     vol.Required("address"): vol.In(discovered_devices),
-                    vol.Required(CONF_PIN, default=DEFAULT_PIN): vol.Coerce(int),
+                    vol.Required(CONF_PIN, default=DEFAULT_PIN): PIN_SCHEMA,
                     vol.Required(CONF_DEFAULT_RUN_TIME, default=DEFAULT_RUN_TIME_MIN): vol.All(
                         vol.Coerce(int), vol.Range(min=1, max=240)
                     ),
@@ -177,7 +182,7 @@ class HunterConfigFlow(ConfigFlow, domain=DOMAIN):
             schema = vol.Schema(
                 {
                     vol.Required("address"): str,
-                    vol.Required(CONF_PIN, default=DEFAULT_PIN): vol.Coerce(int),
+                    vol.Required(CONF_PIN, default=DEFAULT_PIN): PIN_SCHEMA,
                     vol.Required(CONF_DEFAULT_RUN_TIME, default=DEFAULT_RUN_TIME_MIN): vol.All(
                         vol.Coerce(int), vol.Range(min=1, max=240)
                     ),
