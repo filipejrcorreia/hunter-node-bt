@@ -14,14 +14,29 @@ the 0xAC XOR (skip-zero) quirk, and the handshake order match the app exactly.
 """
 
 import asyncio
+import importlib.util
 import json
-import struct
+from pathlib import Path
 
 try:
     from bleak import BleakClient, BleakScanner
 except ImportError:
     BleakClient = None
     BleakScanner = None
+
+_PROTOCOL_PATH = (
+    Path(__file__).parent
+    / "custom_components"
+    / "hunter_node_bt"
+    / "protocol.py"
+)
+_PROTOCOL_SPEC = importlib.util.spec_from_file_location(
+    "hunter_node_bt_protocol", _PROTOCOL_PATH
+)
+if _PROTOCOL_SPEC is None or _PROTOCOL_SPEC.loader is None:
+    raise ImportError(f"Cannot load protocol helpers from {_PROTOCOL_PATH}")
+_PROTOCOL = importlib.util.module_from_spec(_PROTOCOL_SPEC)
+_PROTOCOL_SPEC.loader.exec_module(_PROTOCOL)
 
 # --- GATT UUIDs -------------------------------------------------------------
 NUS_SERVICE = "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
@@ -31,7 +46,7 @@ MSG_TX = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"   # notify (device -> app)
 PIN_SERVICE = "0ed3e3d3-8cd8-4f29-8fec-a7d3a2c5443e"
 PIN_CHAR = "4c9dbe52-3566-4dfc-a299-4ea1353970e2"  # write + notify
 
-CHUNK = 20  # bytes per write (as the app does, regardless of negotiated MTU)
+CHUNK = _PROTOCOL.CHUNK_SIZE
 
 # PinMessageType
 LOGIN_REQUEST = 1
@@ -40,39 +55,21 @@ LOGIN_CHALLENGE_RESPONSE = 3
 LOGIN_CHALLENGE_RESULT = 4
 
 
-def _xor_ac(buf: bytes) -> bytes:
-    # MessageEncryptDecrypt: XOR 0xAC, but leave bytes that are 0x00 unchanged.
-    return bytes((b ^ 0xAC) if b != 0 else 0 for b in buf)
-
-
-def _pin_info(packet_type: int, result: int = 0, random_number: int = 0, pin: int = 0) -> bytes:
-    # DevicePinInfo, 6 bytes little-endian: packetType, result, u16 randomNumber, u16 pin
-    return struct.pack("<BBHH", packet_type, result, random_number & 0xFFFF, pin & 0xFFFF)
-
-
-def _parse_pin_info(buf: bytes):
-    packet_type, result, random_number, pin = struct.unpack("<BBHH", buf[:6])
-    return packet_type, result, random_number, pin
-
-
-def sanitize_hunter_json(text: str) -> str:
-    """Fix common firmware JSON corruption quirks identified in decompiled app."""
-    if '"Cycl"Soak":0' in text:
-        text = text.replace('"Cycl"Soak":0', '"Cycle":0,"Soak":0')
-    if '"SeasonAdjustByMonthEnabl"' in text:
-        text = text.replace('"SeasonAdjustByMonthEnabl"', '"SeasonAdjustByMonthEnable"')
-    if '"St"Remaining":0' in text:
-        text = text.replace('"St"Remaining":0', '"State":0,"Remaining":0')
-    return text
+_xor_ac = _PROTOCOL.xor_ac
+_pin_info = _PROTOCOL.pin_info
+_parse_pin_info = _PROTOCOL.parse_pin_info
+sanitize_hunter_json = _PROTOCOL.sanitize_hunter_json
+validate_pin = _PROTOCOL.validate_pin
+chunk_payload = _PROTOCOL.chunk_payload
 
 
 class HunterNodeBT:
     def __init__(self, address: str, pin: int = 0):
         self.address = address
-        self.pin = int(pin)
+        self.pin = validate_pin(pin)
         self.client: BleakClient | None = None
         self._pin_q: asyncio.Queue = asyncio.Queue()
-        self._msg_buf = bytearray()
+        self._msg_buf = _PROTOCOL.NulDelimitedMessageBuffer()
         self._msg_future: asyncio.Future | None = None
 
     # -- notifications -------------------------------------------------------
@@ -80,12 +77,17 @@ class HunterNodeBT:
         self._pin_q.put_nowait(_parse_pin_info(_xor_ac(bytes(data))))
 
     def _on_msg(self, _char, data: bytearray):
-        self._msg_buf.extend(data)
-        if 0x00 in self._msg_buf:
-            text = bytes(self._msg_buf).split(b"\x00", 1)[0].decode("utf-8", "replace")
+        future = self._msg_future
+        if future is None or future.done():
             self._msg_buf.clear()
-            if self._msg_future and not self._msg_future.done():
-                self._msg_future.set_result(text)
+            return
+        try:
+            text = self._msg_buf.append(bytes(data))
+        except _PROTOCOL.MessageTooLargeError as err:
+            future.set_exception(RuntimeError(str(err)))
+            return
+        if text is not None:
+            future.set_result(text)
 
     async def _next_pin(self, timeout=15):
         return await asyncio.wait_for(self._pin_q.get(), timeout)
@@ -125,13 +127,27 @@ class HunterNodeBT:
             loop = asyncio.get_running_loop()
             self._msg_future = loop.create_future()
             self._msg_buf.clear()
-        for i in range(0, len(payload), CHUNK):
-            # Nordic UART RX characteristic requires write with response
-            await self.client.write_gatt_char(MSG_RX, payload[i : i + CHUNK], response=True)
-        if expect_reply:
-            raw = await asyncio.wait_for(self._msg_future, 20)
+        try:
+            for chunk in chunk_payload(payload, CHUNK):
+                await self.client.write_gatt_char(MSG_RX, chunk, response=True)
+            if not expect_reply:
+                return None
+            try:
+                raw = await asyncio.wait_for(self._msg_future, 20)
+            except TimeoutError:
+                await self.disconnect()
+                raise
             return sanitize_hunter_json(raw)
-        return None
+        except asyncio.CancelledError:
+            await self.disconnect()
+            raise
+        except Exception:
+            await self.disconnect()
+            raise
+        finally:
+            if expect_reply:
+                self._msg_future = None
+                self._msg_buf.clear()
 
     async def read_all(self) -> dict:
         reply = await self.send_command({"Read": "All"})
@@ -163,7 +179,7 @@ async def main():
 
     parser = argparse.ArgumentParser(description="Hunter NODE-BT BLE CLI Client")
     parser.add_argument("--address", "-a", default=None, help="Bluetooth address/UUID (auto-discovered if omitted)")
-    parser.add_argument("--pin", "-p", type=int, default=0, help="Security PIN (default: 0)")
+    parser.add_argument("--pin", "-p", type=validate_pin, default=0, help="Security PIN (0-65535)")
 
     subparsers = parser.add_subparsers(dest="cmd", help="Action to perform")
     subparsers.add_parser("read-all", help="Read complete controller configuration and state (default)")
@@ -193,7 +209,7 @@ async def main():
         if ":" in candidate or "-" in candidate:
             address = candidate
             if len(unknown) > 1 and unknown[1].isdigit():
-                pin = int(unknown[1])
+                pin = validate_pin(unknown[1])
 
     if not address:
         print(f"Scanning for NODE-BT controllers (filtering on NUS {NUS_SERVICE} or name)...")

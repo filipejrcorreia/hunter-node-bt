@@ -11,23 +11,27 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import struct
 
 from bleak import BleakClient
 from bleak.backends.device import BLEDevice
 from bleak_retry_connector import establish_connection
 
-from .const import (
-    ACTIVE_STATES,
-    MSG_RX,
-    MSG_TX,
-    NUS_SERVICE,
-    PIN_CHAR,
+from .const import ACTIVE_STATES, MSG_RX, MSG_TX, PIN_CHAR
+from .protocol import (
+    CHUNK_SIZE,
+    MAX_RESPONSE_SIZE,
+    MessageTooLargeError,
+    NulDelimitedMessageBuffer,
+    chunk_payload,
+    parse_pin_info,
+    pin_info,
+    sanitize_hunter_json,
+    validate_pin,
+    xor_ac,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
-CHUNK = 20
 COMMAND_TIMEOUT = 20
 
 # PinMessageType
@@ -45,41 +49,17 @@ class HunterConnectionError(Exception):
     """Raised on connection/communication failure."""
 
 
-def _xor_ac(buf: bytes) -> bytes:
-    # MessageEncryptDecrypt: XOR 0xAC, but leave 0x00 bytes unchanged (app quirk).
-    return bytes((b ^ 0xAC) if b != 0 else 0 for b in buf)
-
-
-def _pin_info(packet_type: int, result: int = 0, random_number: int = 0, pin: int = 0) -> bytes:
-    # DevicePinInfo: <B B H H> = packetType, result, randomNumber, pin
-    return struct.pack("<BBHH", packet_type, result, random_number & 0xFFFF, pin & 0xFFFF)
-
-
-def sanitize_hunter_json(text: str) -> str:
-    """Fix common firmware JSON corruption quirks identified in decompiled app."""
-    # Fix corrupted Cycle/Soak fields
-    if '"Cycl"Soak":0' in text:
-        text = text.replace('"Cycl"Soak":0', '"Cycle":0,"Soak":0')
-    # Fix truncated SeasonAdjustByMonthEnabl
-    if '"SeasonAdjustByMonthEnabl"' in text:
-        text = text.replace('"SeasonAdjustByMonthEnabl"', '"SeasonAdjustByMonthEnable"')
-    # Fix corrupted Station State / Remaining
-    if '"St"Remaining":0' in text:
-        text = text.replace('"St"Remaining":0', '"State":0,"Remaining":0')
-    return text
-
-
 class HunterNodeBTClient:
     """Manages a connection to one controller."""
 
     def __init__(self, device: BLEDevice, pin: int, name: str | None = None) -> None:
         self._device = device
-        self._pin = int(pin)
+        self._pin = validate_pin(pin)
         self._name = name or device.address
         self._client: BleakClient | None = None
         self._lock = asyncio.Lock()
         self._pin_q: asyncio.Queue[tuple[int, int, int, int]] = asyncio.Queue()
-        self._msg_buf = bytearray()
+        self._msg_buf = NulDelimitedMessageBuffer(MAX_RESPONSE_SIZE)
         self._msg_future: asyncio.Future[str] | None = None
 
     @property
@@ -88,17 +68,22 @@ class HunterNodeBTClient:
 
     # -- notification handlers ----------------------------------------------
     def _on_pin(self, _char, data: bytearray) -> None:
-        raw = _xor_ac(bytes(data))
+        raw = xor_ac(bytes(data))
         if len(raw) >= 6:
-            self._pin_q.put_nowait(struct.unpack("<BBHH", raw[:6]))
+            self._pin_q.put_nowait(parse_pin_info(raw))
 
     def _on_msg(self, _char, data: bytearray) -> None:
-        self._msg_buf.extend(data)
-        if 0x00 in self._msg_buf:
-            text = bytes(self._msg_buf).split(b"\x00", 1)[0].decode("utf-8", "replace")
+        future = self._msg_future
+        if future is None or future.done():
             self._msg_buf.clear()
-            if self._msg_future and not self._msg_future.done():
-                self._msg_future.set_result(text)
+            return
+        try:
+            text = self._msg_buf.append(bytes(data))
+        except MessageTooLargeError as err:
+            future.set_exception(HunterConnectionError(str(err)))
+            return
+        if text is not None:
+            future.set_result(text)
 
     # -- lifecycle -----------------------------------------------------------
     async def ensure_connected(self) -> None:
@@ -121,12 +106,16 @@ class HunterNodeBTClient:
     async def _login(self) -> None:
         while not self._pin_q.empty():
             self._pin_q.get_nowait()
-        await self._client.write_gatt_char(PIN_CHAR, _xor_ac(_pin_info(_LOGIN_REQUEST)), response=False)
+        await self._client.write_gatt_char(
+            PIN_CHAR, xor_ac(pin_info(_LOGIN_REQUEST)), response=False
+        )
         ptype, result, rnd, _ = await asyncio.wait_for(self._pin_q.get(), COMMAND_TIMEOUT)
         if ptype != _LOGIN_CHALLENGE_REQUEST or result != 0:
             raise HunterConnectionError(f"Login challenge failed (type={ptype} result={result})")
-        resp = _pin_info(_LOGIN_CHALLENGE_RESPONSE, random_number=rnd, pin=self._pin ^ rnd)
-        await self._client.write_gatt_char(PIN_CHAR, _xor_ac(resp), response=False)
+        resp = pin_info(
+            _LOGIN_CHALLENGE_RESPONSE, random_number=rnd, pin=self._pin ^ rnd
+        )
+        await self._client.write_gatt_char(PIN_CHAR, xor_ac(resp), response=False)
         ptype, result, _, _ = await asyncio.wait_for(self._pin_q.get(), COMMAND_TIMEOUT)
         if ptype != _LOGIN_CHALLENGE_RESULT or result != 0:
             raise HunterAuthError(f"PIN rejected (result={result})")
@@ -140,62 +129,98 @@ class HunterNodeBTClient:
                 pass
 
     # -- commands ------------------------------------------------------------
-    async def _send(self, command: dict, expect_reply: bool = True) -> str | None:
+    async def _send(self, command: dict, expect_reply: bool = True) -> dict | None:
         async with self._lock:
             await self.ensure_connected()
             payload = json.dumps(command, separators=(",", ":")).encode("utf-8")
             loop = asyncio.get_running_loop()
+            reply_future: asyncio.Future[str] | None = None
             if expect_reply:
-                self._msg_future = loop.create_future()
+                reply_future = loop.create_future()
+                self._msg_future = reply_future
                 self._msg_buf.clear()
-            for i in range(0, len(payload), CHUNK):
-                await self._client.write_gatt_char(MSG_RX, payload[i : i + CHUNK], response=True)
-            if expect_reply:
-                raw_reply = await asyncio.wait_for(self._msg_future, COMMAND_TIMEOUT)
-                return sanitize_hunter_json(raw_reply)
-            return None
+            try:
+                for chunk in chunk_payload(payload, CHUNK_SIZE):
+                    await self._client.write_gatt_char(MSG_RX, chunk, response=True)
+                if reply_future is None:
+                    return None
+                try:
+                    raw_reply = await asyncio.wait_for(reply_future, COMMAND_TIMEOUT)
+                except TimeoutError as err:
+                    raise HunterConnectionError(
+                        "Timed out waiting for a controller response"
+                    ) from err
+                if not raw_reply:
+                    raise HunterConnectionError("Empty response from controller")
+                try:
+                    result = json.loads(sanitize_hunter_json(raw_reply))
+                except json.JSONDecodeError as err:
+                    raise HunterConnectionError(
+                        "Invalid JSON response from controller"
+                    ) from err
+                if not isinstance(result, dict):
+                    raise HunterConnectionError(
+                        "Unexpected response from controller"
+                    )
+                return result
+            except asyncio.CancelledError:
+                await self.disconnect()
+                raise
+            except HunterConnectionError:
+                await self.disconnect()
+                raise
+            except Exception as err:  # noqa: BLE001
+                await self.disconnect()
+                raise HunterConnectionError(str(err)) from err
+            finally:
+                if self._msg_future is reply_future:
+                    self._msg_future = None
+                self._msg_buf.clear()
 
     async def read_all(self) -> dict:
         reply = await self._send({"Read": "All"})
-        if not reply:
-            raise HunterConnectionError("Empty reply from Read All")
-        return json.loads(reply)
+        if reply is None:
+            raise HunterConnectionError("Missing response from Read All")
+        return reply
 
     async def read_state(self) -> dict:
         reply = await self._send({"Read": "Section_State"})
-        if not reply:
-            raise HunterConnectionError("Empty reply from Read Section_State")
-        return json.loads(reply)
+        if reply is None:
+            raise HunterConnectionError("Missing response from Read Section_State")
+        return reply
 
     async def read_last_run(self) -> dict:
         reply = await self._send({"Read": "LastRun"})
-        if not reply:
-            raise HunterConnectionError("Empty reply from Read LastRun")
-        return json.loads(reply)
+        if reply is None:
+            raise HunterConnectionError("Missing response from Read LastRun")
+        return reply
+
+    @staticmethod
+    def _check_status(reply: dict | None, operation: str) -> None:
+        status = reply.get("Status") if reply is not None else None
+        if not isinstance(status, int) or isinstance(status, bool):
+            raise HunterConnectionError(
+                f"Invalid status response while attempting to {operation}"
+            )
+        if status != 0:
+            raise HunterConnectionError(
+                f"Failed to {operation}: status={status}"
+            )
 
     async def start_station(self, station: int, seconds: int) -> None:
         reply = await self._send({"Manual": {"StationNumber": station, "RunTime": seconds}})
-        if reply:
-            data = json.loads(reply)
-            if data.get("Status", 0) != 0:
-                raise HunterConnectionError(f"Failed to start station {station}: status={data.get('Status')}")
+        self._check_status(reply, f"start station {station}")
 
     async def run_program(self, letter: str, seconds: int | None = None) -> None:
         cmd: dict = {"Manual": {"ProgramLetter": letter}}
         if seconds is not None:
             cmd["Manual"]["RunTime"] = seconds
         reply = await self._send(cmd)
-        if reply:
-            data = json.loads(reply)
-            if data.get("Status", 0) != 0:
-                raise HunterConnectionError(f"Failed to run program {letter}: status={data.get('Status')}")
+        self._check_status(reply, f"run program {letter}")
 
     async def stop_all(self) -> None:
         reply = await self._send({"Manual": {"StopAll": True}})
-        if reply:
-            data = json.loads(reply)
-            if data.get("Status", 0) != 0:
-                raise HunterConnectionError(f"Failed to stop all: status={data.get('Status')}")
+        self._check_status(reply, "stop all stations")
 
 
 def station_is_active(state_value: int | None) -> bool:

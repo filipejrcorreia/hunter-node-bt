@@ -6,7 +6,7 @@
         "description": "Select your Hunter NODE-BT controller or enter its Bluetooth address.",
         "data": {
           "address": "Bluetooth Address",
-          "pin": "Controller PIN (default is 0)",
+          "pin": "Controller PIN (0-65535, default is 0)",
           "default_run_time": "Default Manual Run Time (minutes)"
         }
       },
@@ -14,7 +14,7 @@
         "title": "Configure Hunter NODE-BT",
         "description": "Set up communication with {name}.",
         "data": {
-          "pin": "Controller PIN (default is 0)",
+          "pin": "Controller PIN (0-65535, default is 0)",
           "default_run_time": "Default Manual Run Time (minutes)"
         }
       }
