@@ -15,6 +15,8 @@ DEFAULT_SCAN_INTERVAL_MIN = 10
 DEFAULT_SCAN_INTERVAL = 600  # seconds (10 minutes for battery preservation)
 
 MAX_RAIN_DELAY_DAYS = 30
+MAX_SEASON_ADJUST = 300  # percent
+MAX_RUN_TIME_MIN = 240
 
 # GATT UUIDs (Nordic UART Service used as a UART bridge)
 NUS_SERVICE = "6e400001-b5a3-f393-e0a9-e50e24dcca9e"

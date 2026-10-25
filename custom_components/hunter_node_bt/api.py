@@ -229,15 +229,35 @@ class HunterNodeBTClient:
         reply = await self._send({"Manual": {"StopAll": True}})
         self._check_status(reply, "stop all stations")
 
+    async def set_controller(self, settings: dict, operation: str) -> None:
+        """Write one or more Controller settings."""
+        reply = await self._send({"Controller": settings})
+        self._check_status(reply, operation)
+
     async def set_programmable_days_off(self, until: int) -> None:
         """Suspend scheduled watering until a controller timestamp (0 cancels)."""
-        reply = await self._send({"Controller": {"ProgrammableDaysOff": until}})
-        self._check_status(reply, "set rain delay")
+        await self.set_controller({"ProgrammableDaysOff": until}, "set rain delay")
 
     async def set_current_time(self, now: int) -> None:
         """Set the controller clock (controller local-epoch timestamp)."""
-        reply = await self._send({"Controller": {"CurrentTime": now}})
-        self._check_status(reply, "set controller time")
+        await self.set_controller({"CurrentTime": now}, "set controller time")
+
+    async def set_controller_off(self, off: bool) -> None:
+        """Turn the controller off (no watering at all) or back on."""
+        await self.set_controller({"ControllerOff": off}, "set controller off")
+
+    async def set_season_adjust(self, percent: int) -> None:
+        """Set the global seasonal adjustment; this turns the monthly table off."""
+        await self.set_controller(
+            {"SeasonAdjust": percent, "SeasonAdjustByMonthEnable": False},
+            "set season adjust",
+        )
+
+    async def set_season_adjust_by_month(self, enabled: bool) -> None:
+        """Turn the controller's monthly seasonal adjustment table on or off."""
+        await self.set_controller(
+            {"SeasonAdjustByMonthEnable": enabled}, "set monthly season adjust"
+        )
 
 
 def station_is_active(state_value: int | None) -> bool:

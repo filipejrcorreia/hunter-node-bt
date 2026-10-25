@@ -15,12 +15,26 @@ Reverse-engineered directly from the official Hunter NODE-BT app (`com.hunter.no
 - **Automatic Bluetooth Discovery**: Home Assistant automatically detects nearby Hunter NODE-BT controllers advertising the Nordic UART Service.
 - **PIN Authentication**: Supports default PIN (`0`) and custom security PINs with challenge-response encryption.
 - **Valve Control**: One valve entity per station (1–4 depending on your controller model):
-  - Turn on a valve to start irrigation for the configured default duration.
+  - Turn on a valve to start irrigation for that station's Run Time (defaults to the configured manual run time).
   - Turn off a valve to stop irrigation.
 - **Rain Delay**: suspend scheduled watering for 1–30 days.
   - `number.<controller>_rain_delay`: set to N days to delay watering until local midnight N days from now; set to `0` to cancel.
   - **Cancel Rain Delay** button and **Rain Delay Until** timestamp sensor.
   - Works in automations, e.g. `number.set_value` with `value: 2` when the forecast says rain.
+- **Controller On/Off**: `switch` to turn the whole controller off (no watering at all, e.g. for winter) and back on.
+- **Seasonal Adjustment**:
+  - `number` Season Adjust (0–300 %): sets a global adjustment and turns the monthly table off.
+  - `switch` Monthly Season Adjust: use the controller's month-by-month table (shown as the `by_month` attribute).
+  - `sensor` Active Season Adjust: the % applied right now.
+- **Per-Station Run Time**: a `number` per station (minutes) used when its valve is opened; remembered across restarts.
+  - Service `hunter_node_bt.start_watering` waters a valve for a given `duration`:
+    ```yaml
+    action: hunter_node_bt.start_watering
+    target:
+      entity_id: valve.oliveira
+    data:
+      duration: "00:15:00"
+    ```
 - **Sensors**:
   - Controller Battery level (`%`).
   - Soil moisture level (`%`).
