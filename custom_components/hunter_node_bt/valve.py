@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 import logging
 from typing import Any
+
+import voluptuous as vol
 
 from homeassistant.components.valve import (
     ValveDeviceClass,
@@ -11,15 +14,20 @@ from homeassistant.components.valve import (
     ValveEntityFeature,
 )
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ServiceValidationError
+from homeassistant.helpers import config_validation as cv, entity_platform
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .api import station_is_active
-from .const import DOMAIN, STATION_STATES
+from .const import DOMAIN, MAX_RUN_TIME_MIN, STATION_STATES
 from .coordinator import HunterConfigEntry, HunterCoordinator
 
 _LOGGER = logging.getLogger(__name__)
+
+SERVICE_START_WATERING = "start_watering"
+ATTR_DURATION = "duration"
 
 
 async def async_setup_entry(
@@ -36,6 +44,13 @@ async def async_setup_entry(
         for station_num in range(1, count + 1)
     ]
     async_add_entities(entities)
+
+    platform = entity_platform.async_get_current_platform()
+    platform.async_register_entity_service(
+        SERVICE_START_WATERING,
+        {vol.Required(ATTR_DURATION): cv.positive_time_period},
+        "async_start_watering",
+    )
 
 
 class HunterStationValve(CoordinatorEntity[HunterCoordinator], ValveEntity):
@@ -100,12 +115,22 @@ class HunterStationValve(CoordinatorEntity[HunterCoordinator], ValveEntity):
             "station_number": self.station_number,
             "station_state": STATION_STATES.get(st_state_int, "unknown"),
             "remaining_seconds": remaining,
+            "run_time_minutes": self.coordinator.station_run_time_s(self.station_number) // 60,
         }
 
     async def async_open_valve(self) -> None:
-        """Open the valve (start station for configured default runtime)."""
+        """Open the valve for the station's Run Time."""
         await self.coordinator.async_start_station(self.station_number)
 
     async def async_close_valve(self) -> None:
         """Close the valve (stop watering)."""
         await self.coordinator.async_stop_all()
+
+    async def async_start_watering(self, duration: timedelta) -> None:
+        """Water this station for a specific duration."""
+        seconds = int(duration.total_seconds())
+        if not 1 <= seconds <= MAX_RUN_TIME_MIN * 60:
+            raise ServiceValidationError(
+                f"Duration must be between 1 second and {MAX_RUN_TIME_MIN} minutes"
+            )
+        await self.coordinator.async_start_station(self.station_number, seconds)

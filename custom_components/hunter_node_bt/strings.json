@@ -71,5 +71,17 @@
         "name": "Test All Stations"
       }
     }
+  },
+  "services": {
+    "start_watering": {
+      "name": "Start watering",
+      "description": "Water a station for a specific duration.",
+      "fields": {
+        "duration": {
+          "name": "Duration",
+          "description": "How long to water (up to 4 hours)."
+        }
+      }
+    }
   }
 }

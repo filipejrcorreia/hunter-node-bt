@@ -1,0 +1,11 @@
+start_watering:
+  target:
+    entity:
+      integration: hunter_node_bt
+      domain: valve
+  fields:
+    duration:
+      required: true
+      example: "00:15:00"
+      selector:
+        duration:

@@ -39,5 +39,17 @@
         }
       }
     }
+  },
+  "services": {
+    "start_watering": {
+      "name": "Iniciar rega",
+      "description": "Regar uma estação durante um tempo específico.",
+      "fields": {
+        "duration": {
+          "name": "Duração",
+          "description": "Tempo de rega (até 4 horas)."
+        }
+      }
+    }
   }
 }

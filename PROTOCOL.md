@@ -219,6 +219,16 @@ returned `{"Status":0}` and `ControllerState` went `0 → 3`; writing `0` return
 `{"Status":0}`, `ControllerState` went back to `0` and `ProgrammableDaysOff`
 read back as `0`. `Sensor.ProgrammableOffRestore` stayed `0` throughout.
 
+### Controller off and seasonal adjustment (verified 2026-10-25)
+
+- `{"Controller":{"ControllerOff":true}}` → `{"Status":0}`, `ControllerState`
+  `0 → 2` (system off); `false` brings it back to `0`.
+- `{"Controller":{"SeasonAdjust":90,"SeasonAdjustByMonthEnable":false}}` →
+  `{"Status":0}`, read back as `90` / `false`.
+- `{"Controller":{"SeasonAdjustByMonthEnable":true}}` alone turns the monthly
+  table back on; `SeasonAdjustByMonth` (January first) is untouched by either
+  write.
+
 ---
 
 ## 7. Suggested Home Assistant mapping

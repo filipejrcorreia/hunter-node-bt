@@ -40,6 +40,7 @@ async def async_setup_entry(
         HunterNextWaterTimeSensor(coordinator),
         HunterRainDelayUntilSensor(coordinator),
         HunterLastRunSensor(coordinator),
+        HunterActiveSeasonAdjustSensor(coordinator),
     ]
 
     # MoistureSensor reads 100 with no probe attached, so only trust the setting
@@ -239,3 +240,26 @@ class HunterLastRunSensor(HunterBaseSensor):
             "start_event": last_run.get("StartEvent"),
             "stop_event": last_run.get("StopEvent"),
         }
+
+
+class HunterActiveSeasonAdjustSensor(HunterBaseSensor):
+    """Seasonal adjustment % applied to run times right now."""
+
+    _attr_icon = "mdi:sun-thermometer-outline"
+    _attr_native_unit_of_measurement = PERCENTAGE
+
+    def __init__(self, coordinator: HunterCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}_season_adjust_active"
+        self._attr_name = "Active Season Adjust"
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the monthly entry when the table is on, else the global value."""
+        return self.coordinator.season_adjust_active
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return where the value comes from."""
+        by_month = bool(self.coordinator.controller.get("SeasonAdjustByMonthEnable"))
+        return {"source": "monthly" if by_month else "global"}

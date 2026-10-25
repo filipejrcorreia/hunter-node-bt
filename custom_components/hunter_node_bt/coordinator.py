@@ -54,12 +54,28 @@ class HunterCoordinator(DataUpdateCoordinator[dict]):
         self.controller: dict = {}
         self.stations: dict[int, dict] = {}
         self.programs: dict[str, dict] = {}
+        # Per-station manual run time (seconds), set by the station Run Time numbers.
+        self.station_run_times: dict[int, int] = {}
         self._full_data: dict = {}
 
     @property
     def default_run_time_s(self) -> int:
         minutes = self.entry.options.get(CONF_DEFAULT_RUN_TIME, DEFAULT_RUN_TIME_MIN)
         return int(minutes) * 60
+
+    def station_run_time_s(self, station: int) -> int:
+        """Manual run time for a station, falling back to the configured default."""
+        return self.station_run_times.get(station, self.default_run_time_s)
+
+    @property
+    def season_adjust_active(self) -> int | None:
+        """Seasonal adjustment % in force now (monthly table entry when enabled)."""
+        if self.controller.get("SeasonAdjustByMonthEnable"):
+            monthly = self.controller.get("SeasonAdjustByMonth")
+            if isinstance(monthly, list) and len(monthly) == 12:
+                return monthly[dt_util.now().month - 1]
+            return None
+        return self.controller.get("SeasonAdjust")
 
     @property
     def rain_delay_days(self) -> int:
@@ -134,7 +150,7 @@ class HunterCoordinator(DataUpdateCoordinator[dict]):
         await self.async_request_refresh()
 
     async def async_start_station(self, station: int, run_time_s: int | None = None) -> None:
-        seconds = run_time_s if run_time_s is not None else self.default_run_time_s
+        seconds = run_time_s if run_time_s is not None else self.station_run_time_s(station)
         await self._async_command(lambda client: client.start_station(station, seconds))
 
     async def async_run_program(self, letter: str, run_time_s: int | None = None) -> None:
@@ -143,13 +159,43 @@ class HunterCoordinator(DataUpdateCoordinator[dict]):
     async def async_stop_all(self) -> None:
         await self._async_command(lambda client: client.stop_all())
 
+    async def _async_set_controller(
+        self,
+        command: Callable[[HunterNodeBTClient], Awaitable[None]],
+        settings: dict,
+    ) -> None:
+        await self._async_command(command)
+        # Reflect the change immediately; the refresh above is debounced.
+        self.controller.update(settings)
+        self.async_update_listeners()
+
     async def async_set_rain_delay(self, days: int) -> None:
         """Suspend scheduled watering for `days` days (0 cancels the delay)."""
         until = rain_delay_end(dt_util.now(), days) if days > 0 else 0
-        await self._async_command(lambda client: client.set_programmable_days_off(until))
-        # Reflect the change immediately; the refresh above is debounced.
-        self.controller["ProgrammableDaysOff"] = until
-        self.async_update_listeners()
+        await self._async_set_controller(
+            lambda client: client.set_programmable_days_off(until),
+            {"ProgrammableDaysOff": until},
+        )
+
+    async def async_set_controller_off(self, off: bool) -> None:
+        """Turn the whole controller off (no scheduled or manual watering) or on."""
+        await self._async_set_controller(
+            lambda client: client.set_controller_off(off), {"ControllerOff": off}
+        )
+
+    async def async_set_season_adjust(self, percent: int) -> None:
+        """Set a global seasonal adjustment %, turning the monthly table off."""
+        await self._async_set_controller(
+            lambda client: client.set_season_adjust(percent),
+            {"SeasonAdjust": percent, "SeasonAdjustByMonthEnable": False},
+        )
+
+    async def async_set_season_adjust_by_month(self, enabled: bool) -> None:
+        """Turn the monthly seasonal adjustment table on or off."""
+        await self._async_set_controller(
+            lambda client: client.set_season_adjust_by_month(enabled),
+            {"SeasonAdjustByMonthEnable": enabled},
+        )
 
     async def async_sync_clock(self) -> None:
         """Set the controller clock to Home Assistant's local time."""
