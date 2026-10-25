@@ -187,6 +187,38 @@ Factory reset: `{"HunterCustom":{"FactoryReset":true}}`.
 
 `Sensor.Battery` is the battery level; `MoistureSensor` the soil reading.
 
+### Observed on hardware (NODE-BT-543044, firmware 2.2A, 2026-10-25)
+
+- **Timestamps are local wall-clock time encoded as a Unix epoch** ("local
+  epoch"): `CurrentTime`, `ProgrammableDaysOff` and `LastRun.StartTime`.
+  `CurrentTime` read 13:33 "UTC" at 12:35 UTC on the day DST ended — the clock
+  is whatever the app last set and does not follow DST by itself. Write
+  `{"Controller":{"CurrentTime":<local epoch>}}` to resync.
+- **`State.NextWaterTime` is minutes after midnight**, not a timestamp
+  (`360` = 06:00, the first Program A start). No date is given.
+- **`{"Read":"All"}` has no `State` section** — read `Section_State` separately.
+  It also returns `HunterCustom` and `Manual`, and `Controller.VersionLetter`.
+- `Sensor` also carries `MoistureADC`. `MoistureSensor` reads `100` with no soil
+  probe attached and `SoilSensorEnabled:false`. `State` has no
+  `SoilSensorPercentage` on this firmware.
+- `{"Read":"LastRun"}` returns a flat object:
+  `{"StartEvent":2,"StartTime":<local epoch>,"Station":2,"RunTime":144,"StopEvent":1}`
+  (`RunTime` in seconds; event code meanings unknown).
+- Program `StartTimes` uses `65535` for an unused slot.
+
+### Rain delay (programmable days off)
+
+`{"Controller":{"ProgrammableDaysOff":<local epoch>}}` suspends scheduled
+watering until that moment; `ControllerState` reports `3` (programmable off)
+while it is active. The integration writes local midnight N days ahead, and `0`
+to cancel. A past value (e.g. `1791417600` = 2026-10-08 00:00 left over from
+the app) means no delay.
+
+Verified on hardware (2026-10-25): writing `1792972800` (2026-10-26 00:00 local)
+returned `{"Status":0}` and `ControllerState` went `0 → 3`; writing `0` returned
+`{"Status":0}`, `ControllerState` went back to `0` and `ProgrammableDaysOff`
+read back as `0`. `Sensor.ProgrammableOffRestore` stayed `0` throughout.
+
 ---
 
 ## 7. Suggested Home Assistant mapping
@@ -194,6 +226,7 @@ Factory reset: `{"HunterCustom":{"FactoryReset":true}}`.
 - One **switch / valve** entity per station → ON = `{"Manual":{"StationNumber":N,"RunTime":default}}`, OFF = `{"Manual":{"StopAll":true}}` (the controller runs one zone at a time).
 - Poll `{"Read":"Section_State"}` for `State.Station_N.State`/`Remaining` → entity state + remaining-time sensor.
 - Sensors: `Sensor.Battery`, `Sensor.MoistureSensor`, `State.NextWaterTime`.
+- Rain delay: `number` (days, 0 cancels) writing `Controller.ProgrammableDaysOff`.
 - Config entry: PIN (default `0`). Use `bleak` + the `bleak-retry-connector` /
   `habluetooth` stack like other BT integrations; the app uses write-without-response
   and NUS exactly as a UART bridge.

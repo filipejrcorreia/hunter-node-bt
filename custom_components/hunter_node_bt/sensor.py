@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 import logging
 from typing import Any
 
@@ -17,9 +17,11 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from .const import CONTROLLER_STATES, DOMAIN
 from .coordinator import HunterConfigEntry, HunterCoordinator
+from .protocol import from_controller_time, next_water_time
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -36,12 +38,13 @@ async def async_setup_entry(
         HunterBatterySensor(coordinator),
         HunterControllerStateSensor(coordinator),
         HunterNextWaterTimeSensor(coordinator),
+        HunterRainDelayUntilSensor(coordinator),
+        HunterLastRunSensor(coordinator),
     ]
 
-    # Check if soil moisture sensor is present/enabled
-    sensor_data = coordinator.data.get("Sensor", {})
+    # MoistureSensor reads 100 with no probe attached, so only trust the setting
     ctrl_data = coordinator.data.get("Controller", {})
-    if ctrl_data.get("SoilSensorEnabled") or sensor_data.get("MoistureSensor", 0) > 0:
+    if ctrl_data.get("SoilSensorEnabled"):
         entities.append(HunterSoilMoistureSensor(coordinator))
 
     # Add remaining run time sensor for each station
@@ -121,7 +124,7 @@ class HunterSoilMoistureSensor(HunterBaseSensor):
 class HunterControllerStateSensor(HunterBaseSensor):
     """Controller operational state sensor."""
 
-    _attr_icon = "mode_edit"
+    _attr_icon = "mdi:state-machine"
 
     def __init__(self, coordinator: HunterCoordinator) -> None:
         super().__init__(coordinator)
@@ -148,15 +151,13 @@ class HunterNextWaterTimeSensor(HunterBaseSensor):
 
     @property
     def native_value(self) -> datetime | None:
-        """Return next watering time as UTC datetime."""
+        """Return the next watering start.
+
+        The controller only reports the start as minutes after midnight, so the
+        date is the next occurrence of that time of day.
+        """
         state = self.coordinator.data.get("State", {})
-        ts = state.get("NextWaterTime", 0)
-        if not ts or ts <= 0:
-            return None
-        try:
-            return datetime.fromtimestamp(ts, tz=timezone.utc)
-        except (ValueError, OverflowError, OSError):
-            return None
+        return next_water_time(state.get("NextWaterTime"), dt_util.now())
 
 
 class HunterStationRemainingSensor(HunterBaseSensor):
@@ -184,3 +185,57 @@ class HunterStationRemainingSensor(HunterBaseSensor):
         state = self.coordinator.data.get("State", {})
         st_data = state.get(f"Station_{self.station_number}", {})
         return st_data.get("Remaining", 0)
+
+
+class HunterRainDelayUntilSensor(HunterBaseSensor):
+    """Time scheduled watering resumes after a rain delay."""
+
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_icon = "mdi:weather-pouring"
+
+    def __init__(self, coordinator: HunterCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}_rain_delay_until"
+        self._attr_name = "Rain Delay Until"
+
+    @property
+    def native_value(self) -> datetime | None:
+        """Return when the rain delay ends, or None when inactive."""
+        return self.coordinator.rain_delay_until
+
+
+class HunterLastRunSensor(HunterBaseSensor):
+    """Start time of the last watering run."""
+
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_icon = "mdi:history"
+
+    def __init__(self, coordinator: HunterCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}_last_run"
+        self._attr_name = "Last Run"
+
+    @property
+    def _last_run(self) -> dict:
+        return self.coordinator.data.get("LastRun") or {}
+
+    @property
+    def native_value(self) -> datetime | None:
+        """Return when the last run started."""
+        return from_controller_time(
+            self._last_run.get("StartTime"), dt_util.get_default_time_zone()
+        )
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return station, duration and raw start/stop event codes."""
+        last_run = self._last_run
+        station = last_run.get("Station")
+        station_cfg = self.coordinator.stations.get(station, {}) if station else {}
+        return {
+            "station_number": station,
+            "station_name": station_cfg.get("Name"),
+            "run_time_seconds": last_run.get("RunTime"),
+            "start_event": last_run.get("StartEvent"),
+            "stop_event": last_run.get("StopEvent"),
+        }

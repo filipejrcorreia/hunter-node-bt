@@ -151,6 +151,42 @@ class ApiTests(unittest.TestCase):
 
         asyncio.run(run())
 
+    def test_rain_delay_and_clock_commands_write_controller_settings(self):
+        async def run():
+            client = self.client()
+            for command, expected in (
+                (
+                    client.set_programmable_days_off(1792972800),
+                    {"Controller": {"ProgrammableDaysOff": 1792972800}},
+                ),
+                (
+                    client.set_current_time(1792935208),
+                    {"Controller": {"CurrentTime": 1792935208}},
+                ),
+            ):
+                self.gatt.writes.clear()
+                self.gatt._command.clear()
+                await command
+                payload = b"".join(
+                    data for char, data, _ in self.gatt.writes if char == api.MSG_RX
+                )
+                self.assertEqual(json.loads(payload), expected)
+
+        asyncio.run(run())
+
+    def test_section_reads_send_matching_read_command(self):
+        async def run():
+            self.gatt.reply = b'{"Sensor":{"Battery":80}}\x00'
+            self.assertEqual(
+                await self.client().read_sensor(), {"Sensor": {"Battery": 80}}
+            )
+            payload = b"".join(
+                data for char, data, _ in self.gatt.writes if char == api.MSG_RX
+            )
+            self.assertEqual(json.loads(payload), {"Read": "Section_Sensor"})
+
+        asyncio.run(run())
+
     def test_malformed_json_is_reported_as_connection_error(self):
         async def run():
             self.gatt.reply = b"{invalid}\x00"

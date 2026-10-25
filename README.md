@@ -17,11 +17,17 @@ Reverse-engineered directly from the official Hunter NODE-BT app (`com.hunter.no
 - **Valve Control**: One valve entity per station (1–4 depending on your controller model):
   - Turn on a valve to start irrigation for the configured default duration.
   - Turn off a valve to stop irrigation.
+- **Rain Delay**: suspend scheduled watering for 1–30 days.
+  - `number.<controller>_rain_delay`: set to N days to delay watering until local midnight N days from now; set to `0` to cancel.
+  - **Cancel Rain Delay** button and **Rain Delay Until** timestamp sensor.
+  - Works in automations, e.g. `number.set_value` with `value: 2` when the forecast says rain.
 - **Sensors**:
   - Controller Battery level (`%`).
   - Soil moisture level (`%`).
   - Controller operational state (Idle, Running, Rain Delay, etc.).
   - Next scheduled watering time timestamp.
+  - Last run (start time, station, run time).
+  - Rain delay end time.
   - Remaining run time per station (seconds).
 - **Binary Sensors**:
   - Rain sensor active / Clik sensor detection.
@@ -30,6 +36,8 @@ Reverse-engineered directly from the official Hunter NODE-BT app (`com.hunter.no
   - **Stop All Stations**: Instantly halts all active watering valves.
   - **Run Program A / B / C**: Manually start pre-configured irrigation cycles.
   - **Test All Stations**: Runs a quick test sequence across all stations.
+  - **Cancel Rain Delay**: Resumes scheduled watering.
+  - **Sync Clock**: Sets the controller clock to Home Assistant's local time (the controller does not follow DST on its own).
 - **Options Flow**: Easily change the default manual run time (in minutes) via the integration settings without re-pairing.
 
 ---
@@ -83,6 +91,12 @@ python hunter_node_bt_client.py stop
 
 # Run program A
 python hunter_node_bt_client.py run-program A
+
+# Delay watering for 2 days (0 cancels)
+python hunter_node_bt_client.py rain-delay 2
+
+# Set the controller clock to this computer's local time
+python hunter_node_bt_client.py sync-clock
 
 # Send an arbitrary raw JSON command
 python hunter_node_bt_client.py raw '{"Read":"Section_Sensor"}'
