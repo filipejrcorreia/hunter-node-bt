@@ -151,7 +151,7 @@ class ApiTests(unittest.TestCase):
 
         asyncio.run(run())
 
-    def test_rain_delay_and_clock_commands_write_controller_settings(self):
+    def test_controller_setting_commands_write_expected_json(self):
         async def run():
             client = self.client()
             for command, expected in (
@@ -162,6 +162,23 @@ class ApiTests(unittest.TestCase):
                 (
                     client.set_current_time(1792935208),
                     {"Controller": {"CurrentTime": 1792935208}},
+                ),
+                (
+                    client.set_controller_off(True),
+                    {"Controller": {"ControllerOff": True}},
+                ),
+                (
+                    client.set_season_adjust(80),
+                    {
+                        "Controller": {
+                            "SeasonAdjust": 80,
+                            "SeasonAdjustByMonthEnable": False,
+                        }
+                    },
+                ),
+                (
+                    client.set_season_adjust_by_month(True),
+                    {"Controller": {"SeasonAdjustByMonthEnable": True}},
                 ),
             ):
                 self.gatt.writes.clear()
