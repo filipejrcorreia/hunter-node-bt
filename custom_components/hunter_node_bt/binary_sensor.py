@@ -88,5 +88,8 @@ class HunterRainDelaySensor(HunterBaseBinarySensor):
     def is_on(self) -> bool:
         """Return true if rain delay is active."""
         state = self.coordinator.data.get("State", {})
-        # ControllerState 5 = RainDelay, 4 = RainOff
-        return state.get("ControllerState") in (4, 5)
+        # ControllerState 3 = ProgrammableOff (days off), 4 = RainOff, 5 = RainDelay
+        return (
+            state.get("ControllerState") in (3, 4, 5)
+            or self.coordinator.rain_delay_days > 0
+        )

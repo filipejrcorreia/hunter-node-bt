@@ -14,6 +14,7 @@ the 0xAC XOR (skip-zero) quirk, and the handshake order match the app exactly.
 """
 
 import asyncio
+from datetime import datetime
 import importlib.util
 import json
 from pathlib import Path
@@ -61,6 +62,8 @@ _parse_pin_info = _PROTOCOL.parse_pin_info
 sanitize_hunter_json = _PROTOCOL.sanitize_hunter_json
 validate_pin = _PROTOCOL.validate_pin
 chunk_payload = _PROTOCOL.chunk_payload
+to_controller_time = _PROTOCOL.to_controller_time
+rain_delay_end = _PROTOCOL.rain_delay_end
 
 
 class HunterNodeBT:
@@ -166,6 +169,14 @@ class HunterNodeBT:
     async def run_program(self, program: str) -> str | None:
         return await self.send_command({"Manual": {"ProgramLetter": program.upper()}})
 
+    async def set_rain_delay(self, days: int) -> str | None:
+        until = rain_delay_end(datetime.now().astimezone(), days) if days > 0 else 0
+        return await self.send_command({"Controller": {"ProgrammableDaysOff": until}})
+
+    async def sync_clock(self) -> str | None:
+        now = to_controller_time(datetime.now().astimezone())
+        return await self.send_command({"Controller": {"CurrentTime": now}})
+
 
 # --- Quick CLI runner -------------------------------------------------------
 async def main():
@@ -193,6 +204,11 @@ async def main():
 
     prog_p = subparsers.add_parser("run-program", help="Run program cycle (A, B, C, or T)")
     prog_p.add_argument("letter", choices=["A", "B", "C", "T", "a", "b", "c", "t"], help="Program letter")
+
+    delay_p = subparsers.add_parser("rain-delay", help="Suspend scheduled watering for N days (0 cancels)")
+    delay_p.add_argument("days", type=int, help="Days to delay (0 cancels)")
+
+    subparsers.add_parser("sync-clock", help="Set the controller clock to this computer's local time")
 
     raw_p = subparsers.add_parser("raw", help="Send arbitrary raw JSON command to the controller")
     raw_p.add_argument("json_str", help="JSON string, e.g. '{\"Manual\":{\"StopAll\":true}}'")
@@ -265,6 +281,14 @@ async def main():
             letter = args.letter.upper()
             print(f"Starting program {letter}...")
             reply = await client.run_program(letter)
+            print(f"Controller reply: {reply}")
+        elif action == "rain-delay":
+            print("Cancelling rain delay..." if args.days == 0 else f"Setting a {args.days}-day rain delay...")
+            reply = await client.set_rain_delay(args.days)
+            print(f"Controller reply: {reply}")
+        elif action == "sync-clock":
+            print("Syncing controller clock to local time...")
+            reply = await client.sync_clock()
             print(f"Controller reply: {reply}")
         elif action == "raw":
             cmd = json.loads(args.json_str)

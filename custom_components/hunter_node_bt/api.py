@@ -183,17 +183,24 @@ class HunterNodeBTClient:
             raise HunterConnectionError("Missing response from Read All")
         return reply
 
-    async def read_state(self) -> dict:
-        reply = await self._send({"Read": "Section_State"})
+    async def _read(self, section: str) -> dict:
+        reply = await self._send({"Read": section})
         if reply is None:
-            raise HunterConnectionError("Missing response from Read Section_State")
+            raise HunterConnectionError(f"Missing response from Read {section}")
         return reply
 
+    async def read_state(self) -> dict:
+        return await self._read("Section_State")
+
+    async def read_controller(self) -> dict:
+        return await self._read("Section_Controller")
+
+    async def read_sensor(self) -> dict:
+        return await self._read("Section_Sensor")
+
     async def read_last_run(self) -> dict:
-        reply = await self._send({"Read": "LastRun"})
-        if reply is None:
-            raise HunterConnectionError("Missing response from Read LastRun")
-        return reply
+        """Return the flat LastRun record (StartEvent, StartTime, Station, RunTime, StopEvent)."""
+        return await self._read("LastRun")
 
     @staticmethod
     def _check_status(reply: dict | None, operation: str) -> None:
@@ -221,6 +228,16 @@ class HunterNodeBTClient:
     async def stop_all(self) -> None:
         reply = await self._send({"Manual": {"StopAll": True}})
         self._check_status(reply, "stop all stations")
+
+    async def set_programmable_days_off(self, until: int) -> None:
+        """Suspend scheduled watering until a controller timestamp (0 cancels)."""
+        reply = await self._send({"Controller": {"ProgrammableDaysOff": until}})
+        self._check_status(reply, "set rain delay")
+
+    async def set_current_time(self, now: int) -> None:
+        """Set the controller clock (controller local-epoch timestamp)."""
+        reply = await self._send({"Controller": {"CurrentTime": now}})
+        self._check_status(reply, "set controller time")
 
 
 def station_is_active(state_value: int | None) -> bool:

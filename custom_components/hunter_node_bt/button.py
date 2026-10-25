@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 from homeassistant.components.button import ButtonEntity
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -30,6 +31,8 @@ async def async_setup_entry(
         HunterRunProgramButton(coordinator, "B"),
         HunterRunProgramButton(coordinator, "C"),
         HunterRunTestButton(coordinator),
+        HunterCancelRainDelayButton(coordinator),
+        HunterSyncClockButton(coordinator),
     ]
 
     async_add_entities(entities)
@@ -109,3 +112,34 @@ class HunterRunTestButton(HunterBaseButton):
         """Handle button press."""
         # Program T with default station runtime
         await self.coordinator.async_run_program("T", self.coordinator.default_run_time_s)
+
+
+class HunterCancelRainDelayButton(HunterBaseButton):
+    """Button to cancel an active rain delay and resume scheduled watering."""
+
+    _attr_icon = "mdi:weather-sunny"
+
+    def __init__(self, coordinator: HunterCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}_cancel_rain_delay"
+        self._attr_name = "Cancel Rain Delay"
+
+    async def async_press(self) -> None:
+        """Handle button press."""
+        await self.coordinator.async_set_rain_delay(0)
+
+
+class HunterSyncClockButton(HunterBaseButton):
+    """Button to set the controller clock to Home Assistant's local time."""
+
+    _attr_icon = "mdi:clock-check-outline"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, coordinator: HunterCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}_sync_clock"
+        self._attr_name = "Sync Clock"
+
+    async def async_press(self) -> None:
+        """Handle button press."""
+        await self.coordinator.async_sync_clock()

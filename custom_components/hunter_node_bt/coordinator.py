@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+from datetime import datetime, timedelta
 import logging
-from datetime import timedelta
 
 from homeassistant.components import bluetooth
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import dt as dt_util
 
 from .api import HunterAuthError, HunterConnectionError, HunterNodeBTClient
 from .const import (
@@ -20,6 +22,12 @@ from .const import (
     DEFAULT_RUN_TIME_MIN,
     DEFAULT_SCAN_INTERVAL_MIN,
     DOMAIN,
+)
+from .protocol import (
+    from_controller_time,
+    rain_delay_days_remaining,
+    rain_delay_end,
+    to_controller_time,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -53,6 +61,24 @@ class HunterCoordinator(DataUpdateCoordinator[dict]):
         minutes = self.entry.options.get(CONF_DEFAULT_RUN_TIME, DEFAULT_RUN_TIME_MIN)
         return int(minutes) * 60
 
+    @property
+    def rain_delay_days(self) -> int:
+        """Days left on the programmable-off (rain delay), 0 when inactive."""
+        return rain_delay_days_remaining(
+            self.controller.get("ProgrammableDaysOff"),
+            to_controller_time(dt_util.now()),
+        )
+
+    @property
+    def rain_delay_until(self) -> datetime | None:
+        """Local time scheduled watering resumes, or None when no delay is active."""
+        if not self.rain_delay_days:
+            return None
+        return from_controller_time(
+            self.controller.get("ProgrammableDaysOff"),
+            dt_util.get_default_time_zone(),
+        )
+
     def _get_client(self) -> HunterNodeBTClient:
         device = bluetooth.async_ble_device_from_address(self.hass, self.address, connectable=True)
         if device is None:
@@ -67,8 +93,7 @@ class HunterCoordinator(DataUpdateCoordinator[dict]):
             if not self.station_count:
                 full = await client.read_all()
                 self._full_data = full
-                self.controller = full.get("Controller") or {}
-                self.station_count = int(self.controller.get("StationCount") or 0)
+                self.station_count = int((full.get("Controller") or {}).get("StationCount") or 0)
 
                 for i in range(1, 5):
                     st_key = f"Station_{i}"
@@ -79,11 +104,16 @@ class HunterCoordinator(DataUpdateCoordinator[dict]):
                     p_key = f"Program_{p_letter}"
                     if p_key in full:
                         self.programs[p_letter] = full[p_key]
+            else:
+                # Controller and Sensor are not static: battery, rain delay and
+                # settings changed from the phone app all live there.
+                self._full_data.update(await client.read_controller())
+                self._full_data.update(await client.read_sensor())
 
-                return full
-
-            state = await client.read_state()
-            self._full_data.update(state)
+            # Read All does not include the State section.
+            self._full_data.update(await client.read_state())
+            self._full_data["LastRun"] = await client.read_last_run()
+            self.controller = self._full_data.get("Controller") or {}
             return self._full_data
 
         except HunterAuthError as err:
@@ -93,30 +123,38 @@ class HunterCoordinator(DataUpdateCoordinator[dict]):
         finally:
             await client.disconnect()
 
+    async def _async_command(
+        self, command: Callable[[HunterNodeBTClient], Awaitable[None]]
+    ) -> None:
+        client = self._get_client()
+        try:
+            await command(client)
+        finally:
+            await client.disconnect()
+        await self.async_request_refresh()
+
     async def async_start_station(self, station: int, run_time_s: int | None = None) -> None:
         seconds = run_time_s if run_time_s is not None else self.default_run_time_s
-        client = self._get_client()
-        try:
-            await client.start_station(station, seconds)
-        finally:
-            await client.disconnect()
-        await self.async_request_refresh()
+        await self._async_command(lambda client: client.start_station(station, seconds))
 
     async def async_run_program(self, letter: str, run_time_s: int | None = None) -> None:
-        client = self._get_client()
-        try:
-            await client.run_program(letter, run_time_s)
-        finally:
-            await client.disconnect()
-        await self.async_request_refresh()
+        await self._async_command(lambda client: client.run_program(letter, run_time_s))
 
     async def async_stop_all(self) -> None:
-        client = self._get_client()
-        try:
-            await client.stop_all()
-        finally:
-            await client.disconnect()
-        await self.async_request_refresh()
+        await self._async_command(lambda client: client.stop_all())
+
+    async def async_set_rain_delay(self, days: int) -> None:
+        """Suspend scheduled watering for `days` days (0 cancels the delay)."""
+        until = rain_delay_end(dt_util.now(), days) if days > 0 else 0
+        await self._async_command(lambda client: client.set_programmable_days_off(until))
+        # Reflect the change immediately; the refresh above is debounced.
+        self.controller["ProgrammableDaysOff"] = until
+        self.async_update_listeners()
+
+    async def async_sync_clock(self) -> None:
+        """Set the controller clock to Home Assistant's local time."""
+        now = to_controller_time(dt_util.now())
+        await self._async_command(lambda client: client.set_current_time(now))
 
     async def async_shutdown_client(self) -> None:
         if self._client is not None:

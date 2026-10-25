@@ -1,5 +1,6 @@
 """Tests for the BLE protocol helpers shared by the integration and CLI."""
 
+from datetime import datetime, timedelta, timezone
 import json
 import unittest
 
@@ -71,6 +72,61 @@ class ProtocolTests(unittest.TestCase):
         with self.assertRaises(_PROTOCOL.MessageTooLargeError):
             buffer.append(b"12345\x00ignored")
         self.assertEqual(buffer.append(b"ok\x00"), "ok")
+
+
+LISBON = timezone(timedelta(hours=1), "WEST")
+
+
+class ControllerTimeTests(unittest.TestCase):
+    def test_controller_time_is_local_wall_clock_as_epoch(self):
+        local = datetime(2026, 10, 25, 13, 33, 28, tzinfo=LISBON)
+        self.assertEqual(_PROTOCOL.to_controller_time(local), 1792935208)
+        decoded = _PROTOCOL.from_controller_time(1792935208, LISBON)
+        self.assertEqual(decoded.replace(tzinfo=None), local.replace(tzinfo=None))
+        self.assertEqual(decoded.tzinfo, LISBON)
+
+    def test_from_controller_time_rejects_unset_values(self):
+        for value in (0, -1, None, True, "1792935208"):
+            self.assertIsNone(_PROTOCOL.from_controller_time(value, LISBON))
+
+    def test_rain_delay_ends_at_local_midnight_after_n_days(self):
+        now = datetime(2026, 10, 25, 13, 0, tzinfo=LISBON)
+        until = _PROTOCOL.rain_delay_end(now, 2)
+        self.assertEqual(
+            datetime.fromtimestamp(until, tz=timezone.utc).replace(tzinfo=None),
+            datetime(2026, 10, 27, 0, 0),
+        )
+        with self.assertRaises(ValueError):
+            _PROTOCOL.rain_delay_end(now, 0)
+
+    def test_rain_delay_days_remaining_rounds_up_and_ignores_past(self):
+        now = datetime(2026, 10, 25, 13, 0, tzinfo=LISBON)
+        controller_now = _PROTOCOL.to_controller_time(now)
+        for days in (1, 2, 7):
+            until = _PROTOCOL.rain_delay_end(now, days)
+            self.assertEqual(
+                _PROTOCOL.rain_delay_days_remaining(until, controller_now), days
+            )
+        # Value read from hardware: a delay that ended on 2026-10-08.
+        self.assertEqual(
+            _PROTOCOL.rain_delay_days_remaining(1791417600, controller_now), 0
+        )
+        self.assertEqual(_PROTOCOL.rain_delay_days_remaining(0, controller_now), 0)
+        self.assertEqual(_PROTOCOL.rain_delay_days_remaining(None, controller_now), 0)
+
+    def test_next_water_time_is_next_occurrence_of_minutes_after_midnight(self):
+        morning = datetime(2026, 10, 25, 5, 0, tzinfo=LISBON)
+        self.assertEqual(
+            _PROTOCOL.next_water_time(360, morning),
+            datetime(2026, 10, 25, 6, 0, tzinfo=LISBON),
+        )
+        afternoon = datetime(2026, 10, 25, 13, 0, tzinfo=LISBON)
+        self.assertEqual(
+            _PROTOCOL.next_water_time(360, afternoon),
+            datetime(2026, 10, 26, 6, 0, tzinfo=LISBON),
+        )
+        for value in (-1, 1440, 65535, None, False):
+            self.assertIsNone(_PROTOCOL.next_water_time(value, afternoon))
 
 
 if __name__ == "__main__":
