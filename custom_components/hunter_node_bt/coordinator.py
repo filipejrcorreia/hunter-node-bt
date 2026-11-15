@@ -11,6 +11,7 @@ from homeassistant.components import bluetooth
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.event import async_call_later
+from homeassistant.helpers.storage import Store
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
@@ -40,8 +41,15 @@ POLL_TIMEOUT = 120  # seconds
 DISCONNECT_TIMEOUT = 10  # seconds
 # While a station runs, poll faster so the valve closes in HA when the run ends.
 ACTIVE_SCAN_INTERVAL = timedelta(minutes=1)
-# Polls through the proxy fail now and then; keep the last data for this many failures in a row.
-MAX_SOFT_FAILURES = 2
+# Polls through a far-away proxy fail often (weak signal: the connect request gets no answer, status 133).
+# Keep showing the last known data for this long after the last good poll instead of going unavailable,
+# and retry sooner than the normal interval after a failure.
+MAX_STALE = timedelta(hours=2)
+RETRY_INTERVAL = timedelta(minutes=3)
+# The last good read is saved, so a restart with the controller out of reach still starts with
+# the last known state instead of failing setup.
+STORAGE_VERSION = 1
+CACHE_SAVE_DELAY = 30  # seconds
 # Programs, station names and settings can be changed from the phone app, so
 # re-read everything now and then rather than only at startup.
 FULL_READ_INTERVAL = timedelta(hours=1)
@@ -62,6 +70,8 @@ class HunterCoordinator(DataUpdateCoordinator[dict]):
         )
         self._idle_interval = timedelta(minutes=int(scan_interval_min))
         self._failures = 0
+        self._last_success: datetime | None = None
+        self._store: Store[dict] = Store(hass, STORAGE_VERSION, f"{DOMAIN}.{entry.entry_id}")
         self._unsub_run_end: Callable[[], None] | None = None
         self.entry = entry
         self.address: str = entry.unique_id or entry.data["address"]
@@ -126,20 +136,60 @@ class HunterCoordinator(DataUpdateCoordinator[dict]):
             self._client = HunterNodeBTClient(device, self._pin, self.entry.title)
         return self._client
 
+    async def async_load_cache(self) -> None:
+        """Start from the last good read saved before a restart (if any)."""
+        try:
+            cached = await self._store.async_load()
+        except Exception as err:  # noqa: BLE001 - a bad cache must never block setup
+            _LOGGER.debug("Could not load cached state: %s", err)
+            return
+        if not cached or not isinstance(cached.get("data"), dict):
+            return
+        data = cached["data"]
+        self._full_data = data
+        self.controller = data.get("Controller") or {}
+        self.station_count = int(self.controller.get("StationCount") or 0)
+        for i in range(1, 5):
+            if f"Station_{i}" in data:
+                self.stations[i] = data[f"Station_{i}"]
+        for letter in ("A", "B", "C", "T"):
+            if f"Program_{letter}" in data:
+                self.programs[letter] = data[f"Program_{letter}"]
+        try:
+            self._last_success = datetime.fromisoformat(cached.get("saved"))
+        except (TypeError, ValueError):
+            self._last_success = None
+        # the cached station layout is enough to start; a full read is still done on the first good poll
+        self._last_full_read = None
+
+    def _stale_ok(self) -> bool:
+        """True while the last good data is recent enough to keep showing."""
+        return (
+            self._full_data.get("State") is not None
+            and self._last_success is not None
+            and dt_util.utcnow() - self._last_success <= MAX_STALE
+        )
+
     async def _async_update_data(self) -> dict:
         try:
             async with asyncio.timeout(POLL_TIMEOUT):
                 data = await self._async_poll()
         except (UpdateFailed, TimeoutError) as err:
             self._failures += 1
-            if self._full_data.get("State") is not None and self._failures <= MAX_SOFT_FAILURES:
+            # retry sooner than the normal interval: with a weak signal the next attempt often gets through
+            self.update_interval = RETRY_INTERVAL
+            if self._stale_ok():
                 _LOGGER.debug("Poll failed (%s), keeping last data (%s in a row)", err or "timeout", self._failures)
                 return self._full_data
             if isinstance(err, TimeoutError):
                 raise UpdateFailed(f"No reply within {POLL_TIMEOUT} s") from err
             raise
         self._failures = 0
+        self._last_success = dt_util.utcnow()
         self._track_running(data)
+        self._store.async_delay_save(
+            lambda: {"saved": self._last_success.isoformat(), "data": self._full_data}, CACHE_SAVE_DELAY
+        )
         return data
 
     def _track_running(self, data: dict) -> None:
