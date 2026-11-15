@@ -101,6 +101,9 @@ def _coordinator_for_call(hass: HomeAssistant, call: ServiceCall) -> HunterCoord
 async def async_setup_entry(hass: HomeAssistant, entry: HunterConfigEntry) -> bool:
     """Set up Hunter NODE-BT from a config entry."""
     coordinator = HunterCoordinator(hass, entry)
+    # with the controller out of reach the first poll can fail; the last good read (saved) keeps the
+    # entities going until a poll gets through
+    await coordinator.async_load_cache()
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator
 
