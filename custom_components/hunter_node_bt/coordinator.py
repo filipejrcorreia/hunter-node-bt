@@ -162,6 +162,16 @@ class HunterCoordinator(DataUpdateCoordinator[dict]):
         # the cached station layout is enough to start; a full read is still done on the first good poll
         self._last_full_read = None
 
+    @property
+    def data_from_cache(self) -> dict:
+        """The last good read loaded from storage."""
+        return self._full_data
+
+    @property
+    def has_cache(self) -> bool:
+        """True when a last good read was loaded from storage (enough to show the entities)."""
+        return self._full_data.get("State") is not None and bool(self.station_count)
+
     def _stale_ok(self) -> bool:
         """True while the last good data is recent enough to keep showing."""
         return (
