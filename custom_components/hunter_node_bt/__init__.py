@@ -104,11 +104,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: HunterConfigEntry) -> bo
     # with the controller out of reach the first poll can fail; the last good read (saved) keeps the
     # entities going until a poll gets through
     await coordinator.async_load_cache()
-    await coordinator.async_config_entry_first_refresh()
+    from_cache = coordinator.has_cache
+    if from_cache:
+        # Start right away with the last known state and poll in the background: a BLE connection
+        # through a far-away proxy can take minutes and was holding up Home Assistant's startup.
+        coordinator.async_set_updated_data(coordinator.data_from_cache)
+    else:
+        # first install (nothing saved yet): the station layout is needed to create the entities
+        await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
+    if from_cache:
+        entry.async_create_background_task(hass, coordinator.async_refresh(), f"{DOMAIN} first poll")
     return True
 
 
