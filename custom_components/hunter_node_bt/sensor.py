@@ -49,6 +49,7 @@ async def async_setup_entry(
             coordinator, "SettingsChangeDate", "settings_changed", "Settings Changed", "mdi:cog-sync"
         ),
     ]
+    entities.append(HunterLastReadSensor(coordinator))
     entities.extend(HunterProgramScheduleSensor(coordinator, letter) for letter in PROGRAM_LETTERS)
 
     # MoistureSensor reads 100 with no probe attached, so only trust the setting
@@ -337,3 +338,39 @@ class HunterControllerDateSensor(HunterBaseSensor):
         return from_controller_time(
             self.coordinator.controller.get(self.field), dt_util.get_default_time_zone()
         )
+
+
+class HunterLastReadSensor(HunterBaseSensor):
+    """When the controller was last read successfully, with when it was last heard and how strongly.
+
+    With a weak signal the controller can still be heard (its advertisements reach an adapter) while
+    connecting to it fails; the other entities then keep showing the last read, and this one says how old
+    it is.
+    """
+
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:bluetooth-transfer"
+    _attr_name = "Last Read"
+
+    def __init__(self, coordinator: HunterCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}_last_read"
+
+    @property
+    def available(self) -> bool:
+        """Always available: it is most useful exactly when the controller can't be reached."""
+        return self.coordinator.last_success is not None
+
+    @property
+    def native_value(self) -> datetime | None:
+        return self.coordinator.last_success
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        heard = self.coordinator.last_heard
+        return {
+            "last_heard": heard.isoformat(timespec="seconds") if heard else None,
+            "rssi": self.coordinator.last_rssi,
+        }
+
