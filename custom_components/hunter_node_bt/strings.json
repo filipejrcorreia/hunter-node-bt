@@ -53,6 +53,14 @@
       },
       "soil_moisture": {
         "name": "Soil Moisture"
+      },
+      "connection": {
+        "name": "Connection",
+        "state": {
+          "connected": "Connected",
+          "heard": "Heard only",
+          "lost": "Lost"
+        }
       }
     },
     "binary_sensor": {

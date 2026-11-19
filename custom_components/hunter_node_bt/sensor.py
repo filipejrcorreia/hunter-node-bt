@@ -12,7 +12,7 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfTime
+from homeassistant.const import PERCENTAGE, SIGNAL_STRENGTH_DECIBELS_MILLIWATT, EntityCategory, UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -20,7 +20,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from .const import CONTROLLER_STATES, DOMAIN
-from .coordinator import HunterConfigEntry, HunterCoordinator
+from .coordinator import HEARD_WINDOW, HunterConfigEntry, HunterCoordinator
 from .protocol import from_controller_time, next_water_time
 from .schedule import PROGRAM_LETTERS, format_start_time
 
@@ -49,7 +49,7 @@ async def async_setup_entry(
             coordinator, "SettingsChangeDate", "settings_changed", "Settings Changed", "mdi:cog-sync"
         ),
     ]
-    entities.append(HunterLastReadSensor(coordinator))
+    entities.extend([HunterLastReadSensor(coordinator), HunterSignalSensor(coordinator), HunterConnectionSensor(coordinator)])
     entities.extend(HunterProgramScheduleSensor(coordinator, letter) for letter in PROGRAM_LETTERS)
 
     # MoistureSensor reads 100 with no probe attached, so only trust the setting
@@ -373,4 +373,52 @@ class HunterLastReadSensor(HunterBaseSensor):
             "last_heard": heard.isoformat(timespec="seconds") if heard else None,
             "rssi": self.coordinator.last_rssi,
         }
+
+
+class HunterSignalSensor(HunterBaseSensor):
+    """Signal strength (dBm) of the last advertisement heard from the controller."""
+
+    _attr_device_class = SensorDeviceClass.SIGNAL_STRENGTH
+    _attr_native_unit_of_measurement = SIGNAL_STRENGTH_DECIBELS_MILLIWATT
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_name = "Signal"
+
+    def __init__(self, coordinator: HunterCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}_signal"
+
+    @property
+    def available(self) -> bool:
+        """Available while the controller is heard; an old reading would look current."""
+        heard = self.coordinator.last_heard
+        return heard is not None and dt_util.utcnow() - heard <= HEARD_WINDOW
+
+    @property
+    def native_value(self) -> int | None:
+        return self.coordinator.last_rssi
+
+
+class HunterConnectionSensor(HunterBaseSensor):
+    """connected / heard (advertising, but connecting fails) / lost (not heard)."""
+
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = ["connected", "heard", "lost"]
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_translation_key = "connection"
+    _attr_name = "Connection"
+    _attr_icon = "mdi:bluetooth-connect"
+
+    def __init__(self, coordinator: HunterCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}_connection"
+
+    @property
+    def available(self) -> bool:
+        """Always available: it says why the rest may be out of date."""
+        return True
+
+    @property
+    def native_value(self) -> str:
+        return self.coordinator.connection
 

@@ -81,5 +81,17 @@
         }
       }
     }
+  },
+  "entity": {
+    "sensor": {
+      "connection": {
+        "name": "Connection",
+        "state": {
+          "connected": "Connected",
+          "heard": "Heard only",
+          "lost": "Lost"
+        }
+      }
+    }
   }
 }

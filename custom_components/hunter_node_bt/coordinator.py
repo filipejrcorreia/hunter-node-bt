@@ -49,6 +49,8 @@ ACTIVE_SCAN_INTERVAL = timedelta(minutes=1)
 # within MAX_STALE: then it is there, just out of reach for now. Only a controller that has not been heard
 # for MAX_STALE (flat battery, removed) goes unavailable.
 MAX_STALE = timedelta(hours=2)
+# "Heard" in the connection sensor: an advertisement reached an adapter this recently.
+HEARD_WINDOW = timedelta(minutes=10)
 RETRY_INTERVAL = timedelta(minutes=3)
 # The last good read is saved, so a restart with the controller out of reach still starts with
 # the last known state instead of failing setup.
@@ -74,6 +76,7 @@ class HunterCoordinator(DataUpdateCoordinator[dict]):
         )
         self._idle_interval = timedelta(minutes=int(scan_interval_min))
         self._failures = 0
+        self._last_poll_ok = False  # the last poll since startup got through (the cache alone doesn't count)
         self._last_success: datetime | None = None
         self._store: Store[dict] = Store(hass, STORAGE_VERSION, f"{DOMAIN}.{entry.entry_id}")
         self._unsub_run_end: Callable[[], None] | None = None
@@ -196,6 +199,17 @@ class HunterCoordinator(DataUpdateCoordinator[dict]):
         info = bluetooth.async_last_service_info(self.hass, self.address, connectable=False)
         return info.rssi if info is not None else None
 
+    @property
+    def connection(self) -> str:
+        """connected: the last poll got through; heard: polls fail but the controller still advertises
+        (weak signal, out of reach for now); lost: not heard for HEARD_WINDOW."""
+        if self._last_poll_ok:
+            return "connected"
+        heard = self.last_heard
+        if heard is not None and dt_util.utcnow() - heard <= HEARD_WINDOW:
+            return "heard"
+        return "lost"
+
     def _stale_ok(self) -> bool:
         """True while the last good data can keep showing: read recently, or the controller is still heard."""
         if self._full_data.get("State") is None or self._last_success is None:
@@ -212,6 +226,7 @@ class HunterCoordinator(DataUpdateCoordinator[dict]):
                 data = await self._async_poll()
         except (UpdateFailed, TimeoutError) as err:
             self._failures += 1
+            self._last_poll_ok = False
             # retry sooner than the normal interval: with a weak signal the next attempt often gets through
             self.update_interval = RETRY_INTERVAL
             if self._stale_ok():
@@ -222,6 +237,7 @@ class HunterCoordinator(DataUpdateCoordinator[dict]):
                 raise UpdateFailed(f"No reply within {POLL_TIMEOUT} s") from err
             raise
         self._failures = 0
+        self._last_poll_ok = True
         self._last_success = dt_util.utcnow()
         self._track_running(data)
         self._store.async_delay_save(
