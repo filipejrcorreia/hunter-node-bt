@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from homeassistant.components.button import ButtonEntity
@@ -169,7 +170,8 @@ class HunterBatteryReplacedButton(HunterBaseButton):
 
 
 class HunterRefreshButton(HunterBaseButton):
-    """Button to re-read programs, stations and settings, e.g. after using the phone app."""
+    """Button to read everything now: after using the phone app, or to try a connection right away
+    when the controller is only heard (weak signal) instead of waiting for the next retry."""
 
     _attr_icon = "mdi:refresh"
     _attr_entity_category = EntityCategory.CONFIG
@@ -179,6 +181,18 @@ class HunterRefreshButton(HunterBaseButton):
         self._attr_unique_id = f"{coordinator.address}_refresh"
         self._attr_name = "Refresh"
 
+    @property
+    def available(self) -> bool:
+        """Always available: it is most needed exactly when the controller can't be reached."""
+        return True
+
     async def async_press(self) -> None:
-        """Handle button press."""
+        """Handle button press: without a working connection, start a fresh one (as a reload would)."""
+        if self.coordinator.connection != "connected":
+            try:
+                async with asyncio.timeout(10):
+                    await self.coordinator.async_shutdown_client()
+            except Exception as err:  # noqa: BLE001 - a stuck old connection must not block the new attempt
+                _LOGGER.debug("Dropping the old connection failed: %s", err)
+                self.coordinator._client = None
         await self.coordinator.async_full_refresh()
