@@ -81,5 +81,17 @@
         }
       }
     }
+  },
+  "entity": {
+    "sensor": {
+      "connection": {
+        "name": "Ligação",
+        "state": {
+          "connected": "Ligado",
+          "heard": "Só ouvido",
+          "lost": "Perdido"
+        }
+      }
+    }
   }
 }
