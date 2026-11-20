@@ -101,6 +101,8 @@ Reverse-engineered directly from the official Hunter NODE-BT app (`com.hunter.no
 3. If prompted, select your controller's Bluetooth address and enter your **PIN** (default is `0`).
 4. Set your preferred default manual run time (default is 10 minutes).
 
+**If the controller isn't found:** Home Assistant's Bluetooth adapters and ESPHome proxies scan passively most of the time (the default *Auto* mode), and passive scans don't receive scan responses, where the NODE-BT advertises its service. Adding the integration from **Add Integration** runs a short active scan first, then lists controllers first and every other nearby device after them, strongest signal first. You can also type the address in any format (`aa-bb-cc-dd-ee-ff`, `AABBCCDDEEFF`). Pressing a button on the controller wakes it if it's asleep.
+
 ---
 
 ## Standalone Test Client

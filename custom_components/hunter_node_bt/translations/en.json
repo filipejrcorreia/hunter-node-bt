@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Connect to Hunter NODE-BT",
-        "description": "Select your Hunter NODE-BT controller or enter its Bluetooth address.",
+        "description": "Pick your Hunter NODE-BT controller, or type its Bluetooth address (for example AA:BB:CC:DD:EE:FF). Controllers advertising the NODE-BT service are listed first; the rest are other Bluetooth devices nearby, strongest signal first. If yours isn't listed, press a button on the controller to wake it and open this form again.",
         "data": {
           "address": "Bluetooth Address",
           "pin": "Controller PIN (0-65535, default is 0)",
@@ -22,7 +22,9 @@
     "error": {
       "cannot_connect": "Failed to connect to the controller over Bluetooth. Ensure it is powered and within range.",
       "invalid_auth": "The PIN provided was rejected by the controller.",
-      "unknown": "An unexpected error occurred."
+      "unknown": "An unexpected error occurred.",
+      "invalid_address": "That isn't a Bluetooth address. It should look like AA:BB:CC:DD:EE:FF.",
+      "not_found": "No Bluetooth adapter or proxy has heard that address recently. Check it, wake the controller and make sure it's within range of an adapter or proxy."
     },
     "abort": {
       "already_configured": "This Hunter NODE-BT controller is already configured."
